@@ -1,0 +1,8 @@
+{
+    "name": "asce-wind-tool",
+    "version": "0.0.1",
+    "buildTag": "latest",
+    "env": {
+        "npm_config_loglevel": "silent"
+    }
+}

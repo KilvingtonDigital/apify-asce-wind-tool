@@ -1,0 +1,16 @@
+{
+    "name": "asce-wind-speed-scraper",
+    "version": "0.0.1",
+    "description": "Scrapes wind speed data from ASCE Hazard Tool",
+    "main": "main.js",
+    "dependencies": {
+        "apify": "^3.1.0",
+        "puppeteer": "^21.0.0"
+    },
+    "scripts": {
+        "start": "node main.js",
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "author": "Antigravity",
+    "license": "ISC"
+}
