@@ -49,9 +49,7 @@ Apify.main(async () => {
 
         // Welcome Popup - Try Escape first, then selectors
         try {
-            await page.keyboard.press('Escape');
-            await new Promise(r => setTimeout(r, 1000));
-
+            console.log("Waiting for potential popups...");
             const closeSelectors = [
                 'calcite-action[icon="x"]',
                 'button[title="Close"]',
@@ -63,16 +61,22 @@ Apify.main(async () => {
                 'calcite-modal .close'
             ];
 
-            await page.evaluate((selectors) => {
-                for (const sel of selectors) {
-                    const els = document.querySelectorAll(sel);
-                    els.forEach(el => {
-                        el.click();
-                    });
-                }
-            }, closeSelectors);
+            // Aggressive loop to ensure popup is GONE
+            for (let i = 0; i < 5; i++) {
+                await page.keyboard.press('Escape');
+                await new Promise(r => setTimeout(r, 500));
 
-            await new Promise(r => setTimeout(r, 1000));
+                await page.evaluate((selectors) => {
+                    selectors.forEach(sel => {
+                        document.querySelectorAll(sel).forEach(el => el.click());
+                    });
+                    // Force remove generic modal containers if they exist
+                    const modals = document.querySelectorAll('calcite-modal, .modal, .popup');
+                    modals.forEach(m => m.style.display = 'none');
+                }, closeSelectors);
+
+                await new Promise(r => setTimeout(r, 1000));
+            }
         } catch (e) {
             console.log("Popup close sequence warning: " + e.message);
         }
@@ -106,20 +110,30 @@ Apify.main(async () => {
             throw new Error("Could not input address");
         }
 
-        // Wait for suggestions
+        // Wait for suggestions or force Enter
         const suggestionSelector = '.esri-search__suggestions-list li, ul[role="listbox"] li';
         try {
-            await page.waitForSelector(suggestionSelector, { timeout: 8000 });
+            console.log("Waiting for address suggestions...");
+            // Shorter timeout for suggestions, usually they appear fast if working
+            await page.waitForSelector(suggestionSelector, { timeout: 5000 });
             const suggestion = await page.$(suggestionSelector);
             if (suggestion) {
+                console.log("Clicking suggestion...");
                 await suggestion.click();
             } else {
+                console.log("Suggestions found but empty? Pressing Enter.");
                 await page.keyboard.press('Enter');
             }
         } catch (e) {
-            console.log("No suggestions, using Enter...");
+            console.log("No suggestions found (timeout). Force pressing Enter...");
+            // Ensure focus is still on input
+            await page.focus(inputSelector).catch(() => console.log("Focus warning"));
             await page.keyboard.press('Enter');
         }
+
+        // Critical: Wait after address submission for map to zoom/update
+        console.log("Waiting 5s for map to update after address search...");
+        await new Promise(r => setTimeout(r, 5000));
 
         // --- 5. Select Risk Category II ---
         console.log("Setting Risk Category...");
@@ -188,6 +202,14 @@ Apify.main(async () => {
 
     } catch (error) {
         console.error("Scraping failed: " + error.message);
+
+        // Take screenshot on failure
+        try {
+            const screenshotBuffer = await page.screenshot();
+            await Apify.setValue('ERROR_SCREENSHOT', screenshotBuffer, { contentType: 'image/png' });
+            console.log('Saved error screenshot to Key-Value Store as "ERROR_SCREENSHOT"');
+        } catch (e) { console.log("Could not save screenshot"); }
+
         await Apify.pushData({
             address: address,
             status: 'failed',
