@@ -1,0 +1,17 @@
+{
+    "title": "ASCE Hazard Tool Input",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "address": {
+            "title": "Search Address",
+            "type": "string",
+            "description": "The full address to search for wind speed data.",
+            "editor": "textfield",
+            "prefill": "411 Crusaders Dr, Sanford, North Carolina, 27330"
+        }
+    },
+    "required": [
+        "address"
+    ]
+}
