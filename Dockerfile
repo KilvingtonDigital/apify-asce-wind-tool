@@ -1,5 +1,5 @@
-# Using Apify Node.js image automatically handles Chrome/Puppeteer dependencies
-FROM apify/actor-node:18
+# Using Apify image with Puppeteer + Chrome pre-installed
+FROM apify/actor-node-puppeteer-chrome:18
 COPY package*.json ./
 RUN npm install
 COPY . ./
