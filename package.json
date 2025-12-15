@@ -5,7 +5,7 @@
     "main": "main.js",
     "dependencies": {
         "apify": "^2.3.2",
-        "puppeteer": "^21.0.0"
+        "puppeteer": "^13.0.0"
     },
     "scripts": {
         "start": "node main.js",
