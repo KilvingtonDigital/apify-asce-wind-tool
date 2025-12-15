@@ -4,7 +4,7 @@
     "description": "Scrapes wind speed data from ASCE Hazard Tool",
     "main": "main.js",
     "dependencies": {
-        "apify": "^3.1.0",
+        "apify": "^2.3.2",
         "puppeteer": "^21.0.0"
     },
     "scripts": {
