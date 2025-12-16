@@ -1,8 +1,9 @@
-const Apify = require('apify');
+const { Actor } = require('apify');
+const { launchPuppeteer } = require('crawlee');
 
-Apify.main(async () => {
+Actor.main(async () => {
     // 1. Get Input
-    const input = await Apify.getInput();
+    const input = await Actor.getInput();
     const address = input && input.address;
 
     if (!address) {
@@ -11,12 +12,11 @@ Apify.main(async () => {
 
     console.log(`Starting ASCE Wind Speed Lookup for: ${address}`);
 
-    // 2. Launch Puppeteer
-    // Apify manages the browser launch (headless, stealth, proxies etc.)
-    const browser = await Apify.launchPuppeteer({
+    // 2. Launch Puppeteer via Crawlee (modern)
+    const browser = await launchPuppeteer({
         useChrome: true,
-        stealth: true,
         launchOptions: {
+            // Standard stealth args are handled by Crawlee automatically
             args: ['--window-size=1280,800']
         }
     });
@@ -191,7 +191,7 @@ Apify.main(async () => {
         if (windSpeed) {
             console.log(`SUCCESS: Found Wind Speed: ${windSpeed}`);
             // Push data to Apify dataset (this is the API response)
-            await Apify.pushData({
+            await Actor.pushData({
                 address: address,
                 wind_speed: windSpeed,
                 status: 'success'
@@ -206,11 +206,11 @@ Apify.main(async () => {
         // Take screenshot on failure
         try {
             const screenshotBuffer = await page.screenshot();
-            await Apify.setValue('ERROR_SCREENSHOT', screenshotBuffer, { contentType: 'image/png' });
+            await Actor.setValue('ERROR_SCREENSHOT', screenshotBuffer, { contentType: 'image/png' });
             console.log('Saved error screenshot to Key-Value Store as "ERROR_SCREENSHOT"');
         } catch (e) { console.log("Could not save screenshot"); }
 
-        await Apify.pushData({
+        await Actor.pushData({
             address: address,
             status: 'failed',
             error: error.message
