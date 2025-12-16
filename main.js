@@ -2,8 +2,19 @@ const { Actor } = require('apify');
 const { launchPuppeteer } = require('crawlee');
 
 Actor.main(async () => {
-    // 1. Get Input
-    const input = await Actor.getInput();
+    // 1. Get Input with Local Fallback
+    let input = await Actor.getInput();
+
+    // Check if running locally (no platform env vars usually means local node run)
+    const isLocal = !process.env.APIFY_IS_AT_HOME;
+
+    if (!input && isLocal) {
+        console.log("Running locally? Attempting to load 'local_input.json'...");
+        try {
+            input = require('./local_input.json');
+        } catch (e) { console.log("Could not load local_input.json"); }
+    }
+
     const address = input && input.address;
 
     if (!address) {
@@ -12,12 +23,13 @@ Actor.main(async () => {
 
     console.log(`Starting ASCE Wind Speed Lookup for: ${address}`);
 
-    // 2. Launch Puppeteer via Crawlee (modern)
+    // 2. Launch Puppeteer via Crawlee
     const browser = await launchPuppeteer({
         useChrome: true,
         launchOptions: {
-            // Standard stealth args are handled by Crawlee automatically
-            args: ['--window-size=1280,800']
+            // Force headful if local dev, otherwise use input setting or default to "new" (headless) in prod
+            headless: isLocal ? false : 'new',
+            args: ['--window-size=1280,800', '--start-maximized']
         }
     });
 
@@ -51,38 +63,22 @@ Actor.main(async () => {
         try {
             console.log("Waiting for potential popups...");
             const closeSelectors = [
-                'calcite-action[icon="x"]',
-                'button[title="Close"]',
-                '.modal-close',
-                'span.esri-icon-close',
-                'div[role="button"][aria-label="Close"]',
-                '.calcite-action',
-                'button.close',
-                'calcite-modal .close'
+                'calcite-action[icon="x"]', 'button[title="Close"]', '.modal-close', 'span.esri-icon-close',
+                'div[role="button"][aria-label="Close"]', '.calcite-action', 'button.close', 'calcite-modal .close'
             ];
-
-            // Aggressive loop to ensure popup is GONE
+            // Aggressive loop
             for (let i = 0; i < 5; i++) {
                 await page.keyboard.press('Escape');
                 await new Promise(r => setTimeout(r, 500));
-
                 await page.evaluate((selectors) => {
-                    selectors.forEach(sel => {
-                        document.querySelectorAll(sel).forEach(el => el.click());
-                    });
-                    // Force remove generic modal containers if they exist
+                    selectors.forEach(sel => { document.querySelectorAll(sel).forEach(el => el.click()); });
                     const modals = document.querySelectorAll('calcite-modal, .modal, .popup');
                     modals.forEach(m => m.style.display = 'none');
                 }, closeSelectors);
-
                 await new Promise(r => setTimeout(r, 1000));
             }
-        } catch (e) {
-            console.log("Popup close sequence warning: " + e.message);
-        }
+        } catch (e) { console.log("Popup warning: " + e.message); }
 
-        // --- 4. Input Address ---
-        // --- 4. Input Address ---
         // --- 4. Input Address ---
         console.log(`Searching for address: ${address}`);
 
@@ -124,7 +120,7 @@ Actor.main(async () => {
         let inputHandle = await findDeepInput();
 
         // Retry logic for finding input
-        if (!inputHandle.id) { // .id check basically checks if handle is not null/undefined effectively in puppeteer context logic sometimes, but let's be strict
+        if (!inputHandle.id && !inputHandle.asElement()) {
             console.log("Input not found instantly, waiting 3s...");
             await new Promise(r => setTimeout(r, 3000));
             inputHandle = await findDeepInput();
@@ -139,6 +135,7 @@ Actor.main(async () => {
             // Tab Navigation Fallback
             await page.keyboard.press('Tab');
             await page.keyboard.press('Tab');
+            await page.keyboard.press('Tab'); // Maybe 3 times?
             await page.keyboard.type(address, { delay: 100 });
         }
 
@@ -150,7 +147,6 @@ Actor.main(async () => {
         const suggestionSelector = '.esri-search__suggestions-list li, ul[role="listbox"] li';
         try {
             console.log("Waiting for address suggestions...");
-            // Shorter timeout for suggestions, usually they appear fast if working
             await page.waitForSelector(suggestionSelector, { timeout: 5000 });
             const suggestion = await page.$(suggestionSelector);
             if (suggestion) {
@@ -163,7 +159,7 @@ Actor.main(async () => {
         } catch (e) {
             console.log("No suggestions found (timeout). Force pressing Enter...");
             // Ensure focus is still on input (try first selector as fallback)
-            await page.focus(searchWidgetSelectors[0]).catch(() => console.log("Focus warning"));
+            try { await inputHandle.focus(); } catch (e) { }
             await page.keyboard.press('Enter');
         }
 
@@ -176,21 +172,13 @@ Actor.main(async () => {
         await new Promise(r => setTimeout(r, 3000));
         try {
             const riskSelect = await page.$('select[aria-label*="Risk"], select');
-            if (riskSelect) {
-                await riskSelect.select('II');
-            }
-        } catch (e) {
-            console.log("Could not auto-select Risk Category.");
-        }
+            if (riskSelect) await riskSelect.select('II');
+        } catch (e) { }
 
         // --- 6. Select Load Type: Wind ---
         console.log("Selecting Wind Load...");
         try {
             const windClicked = await clickByText('label', 'Wind');
-            if (!windClicked) {
-                const windCheckbox = await page.$('input[value="Wind"], input[name="Wind"]');
-                if (windCheckbox) await windCheckbox.click();
-            }
         } catch (e) { }
 
         // --- 7. View Results ---
@@ -213,14 +201,6 @@ Actor.main(async () => {
                     return el.textContent.trim();
                 }
             }
-            // Fallback: TreeWalker
-            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-            let node;
-            while (node = walker.nextNode()) {
-                if (node.textContent.includes('Vmph')) {
-                    return node.textContent.trim();
-                }
-            }
             return null;
         });
 
@@ -238,12 +218,15 @@ Actor.main(async () => {
 
     } catch (error) {
         console.error("Scraping failed: " + error.message);
+        require('fs').writeFileSync('error.log', error.stack || error.message);
 
         // Take screenshot on failure
         try {
-            const screenshotBuffer = await page.screenshot();
-            await Actor.setValue('ERROR_SCREENSHOT', screenshotBuffer, { contentType: 'image/png' });
-            console.log('Saved error screenshot to Key-Value Store as "ERROR_SCREENSHOT"');
+            if (page) {
+                const screenshotBuffer = await page.screenshot();
+                await Actor.setValue('ERROR_SCREENSHOT', screenshotBuffer, { contentType: 'image/png' });
+                console.log('Saved error screenshot to Key-Value Store as "ERROR_SCREENSHOT"');
+            }
         } catch (e) { console.log("Could not save screenshot"); }
 
         await Actor.pushData({
@@ -253,6 +236,6 @@ Actor.main(async () => {
         });
         throw error;
     } finally {
-        await browser.close();
+        if (browser) await browser.close();
     }
 });
