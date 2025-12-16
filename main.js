@@ -165,8 +165,8 @@ Actor.main(async () => {
             }
         } catch (e) {
             console.log("No suggestions found (timeout). Force pressing Enter...");
-            // Ensure focus is still on input
-            await page.focus(inputSelector).catch(() => console.log("Focus warning"));
+            // Ensure focus is still on input (try first selector as fallback)
+            await page.focus(searchWidgetSelectors[0]).catch(() => console.log("Focus warning"));
             await page.keyboard.press('Enter');
         }
 
