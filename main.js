@@ -83,16 +83,36 @@ Actor.main(async () => {
 
         // --- 4. Input Address ---
         // --- 4. Input Address ---
+        // --- 4. Input Address ---
         console.log(`Searching for address: ${address}`);
 
-        // Use standard and deep selectors to find the input within Esri's Shadow DOM/iframe structure
-        const searchWidgetSelectors = [
-            'esri-search >>> input',
-            '.esri-search__input',
-            'input[placeholder="Enter Location"]'
-        ];
+        // Define a helper to pierce Shadow DOM deeply
+        const findDeepInput = async () => {
+            return await page.evaluateHandle(() => {
+                function traverse(root) {
+                    if (!root) return null;
+                    if (root.querySelectorAll) {
+                        const inputs = root.querySelectorAll('input');
+                        for (const input of inputs) {
+                            if (input.placeholder && input.placeholder.includes('Location')) return input;
+                            if (input.classList.contains('esri-input')) return input;
+                        }
+                    }
 
-        let inputFound = false;
+                    // Walk children to find shadow roots
+                    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                    let node;
+                    while (node = walker.nextNode()) {
+                        if (node.shadowRoot) {
+                            const found = traverse(node.shadowRoot);
+                            if (found) return found;
+                        }
+                    }
+                    return null;
+                }
+                return traverse(document.body);
+            });
+        };
 
         // 1. Try to "Activate" or "Expand" the widget first
         try {
@@ -101,53 +121,30 @@ Actor.main(async () => {
             await new Promise(r => setTimeout(r, 1000));
         } catch (e) { }
 
-        // 2. Find and Type
-        for (const selector of searchWidgetSelectors) {
-            try {
-                // Check if element exists
-                const el = await page.$(selector);
-                if (el) {
-                    console.log(`Found address input via selector: ${selector}`);
-                    await el.focus();
+        let inputHandle = await findDeepInput();
 
-                    // Type slowly
-                    await page.keyboard.type(address, { delay: 100 });
-                    inputFound = true;
-                    break;
-                }
-            } catch (e) { console.log(`Selector failed: ${selector}`); }
+        // Retry logic for finding input
+        if (!inputHandle.id) { // .id check basically checks if handle is not null/undefined effectively in puppeteer context logic sometimes, but let's be strict
+            console.log("Input not found instantly, waiting 3s...");
+            await new Promise(r => setTimeout(r, 3000));
+            inputHandle = await findDeepInput();
         }
 
-        if (!inputFound) {
-            console.log("Could not type using standard Puppeteer. Trying forced injection...");
-            // Fallback: Force inject using deep logic
-            await page.evaluate((addr) => {
-                // Try to find ANY input that looks like a search bar
-                const inputs = document.querySelectorAll('input');
-                let target = null;
-                for (const i of inputs) {
-                    if (i.placeholder && i.placeholder.includes('Location')) target = i;
-                    if (i.className.includes('esri-input')) target = i;
-                }
-
-                if (target) {
-                    target.value = addr;
-                    target.dispatchEvent(new Event('input', { bubbles: true }));
-                    target.dispatchEvent(new Event('change', { bubbles: true }));
-                    target.focus();
-                } else {
-                    // Try Shadow DOM
-                    const search = document.querySelector('esri-search');
-                    if (search && search.shadowRoot) {
-                        const shadowInput = search.shadowRoot.querySelector('input');
-                        if (shadowInput) {
-                            shadowInput.value = addr;
-                            shadowInput.dispatchEvent(new Event('input', { bubbles: true }));
-                        }
-                    }
-                }
-            }, address);
+        if (inputHandle && inputHandle.asElement()) {
+            console.log("Found input via Deep Shadow Walker!");
+            await inputHandle.focus();
+            await page.keyboard.type(address, { delay: 100 });
+        } else {
+            console.log("Deep Walker failed. Trying Tab Navigation Fallback...");
+            // Tab Navigation Fallback
+            await page.keyboard.press('Tab');
+            await page.keyboard.press('Tab');
+            await page.keyboard.type(address, { delay: 100 });
         }
+
+        // Dump HTML if we suspect failure (for debugging)
+        const htmlDump = await page.content();
+        await Actor.setValue('DEBUG_HTML', htmlDump, { contentType: 'text/html' });
 
         // Wait for suggestions or force Enter
         const suggestionSelector = '.esri-search__suggestions-list li, ul[role="listbox"] li';
