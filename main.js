@@ -82,32 +82,71 @@ Actor.main(async () => {
         }
 
         // --- 4. Input Address ---
+        // --- 4. Input Address ---
         console.log(`Searching for address: ${address}`);
-        const inputSelector = 'input[placeholder="Enter Location"], input[type="text"].esri-input';
 
+        // Use standard and deep selectors to find the input within Esri's Shadow DOM/iframe structure
+        const searchWidgetSelectors = [
+            'esri-search >>> input',
+            '.esri-search__input',
+            'input[placeholder="Enter Location"]'
+        ];
+
+        let inputFound = false;
+
+        // 1. Try to "Activate" or "Expand" the widget first
         try {
-            // Attempt standard wait
+            const expandBtn = await page.$('.esri-icon-search, .esri-search__submit-button');
+            if (expandBtn) await expandBtn.click();
+            await new Promise(r => setTimeout(r, 1000));
+        } catch (e) { }
+
+        // 2. Find and Type
+        for (const selector of searchWidgetSelectors) {
             try {
-                await page.waitForSelector(inputSelector, { visible: true, timeout: 5000 });
-            } catch (e) { console.log("Input not visible/interactable, attempting forced injection."); }
-
-            // Force inject value even if covered
-            await page.evaluate((selector, addr) => {
-                const el = document.querySelector(selector);
+                // Check if element exists
+                const el = await page.$(selector);
                 if (el) {
-                    el.value = addr;
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.focus();
+                    console.log(`Found address input via selector: ${selector}`);
+                    await el.focus();
+
+                    // Type slowly
+                    await page.keyboard.type(address, { delay: 100 });
+                    inputFound = true;
+                    break;
                 }
-            }, inputSelector, address);
+            } catch (e) { console.log(`Selector failed: ${selector}`); }
+        }
 
-            // Also try standard type if possible
-            try { await page.type(inputSelector, ' ', { delay: 100 }); } catch (e) { }
+        if (!inputFound) {
+            console.log("Could not type using standard Puppeteer. Trying forced injection...");
+            // Fallback: Force inject using deep logic
+            await page.evaluate((addr) => {
+                // Try to find ANY input that looks like a search bar
+                const inputs = document.querySelectorAll('input');
+                let target = null;
+                for (const i of inputs) {
+                    if (i.placeholder && i.placeholder.includes('Location')) target = i;
+                    if (i.className.includes('esri-input')) target = i;
+                }
 
-        } catch (e) {
-            console.error("Error interacting with input: " + e.message);
-            throw new Error("Could not input address");
+                if (target) {
+                    target.value = addr;
+                    target.dispatchEvent(new Event('input', { bubbles: true }));
+                    target.dispatchEvent(new Event('change', { bubbles: true }));
+                    target.focus();
+                } else {
+                    // Try Shadow DOM
+                    const search = document.querySelector('esri-search');
+                    if (search && search.shadowRoot) {
+                        const shadowInput = search.shadowRoot.querySelector('input');
+                        if (shadowInput) {
+                            shadowInput.value = addr;
+                            shadowInput.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    }
+                }
+            }, address);
         }
 
         // Wait for suggestions or force Enter
