@@ -42,6 +42,7 @@ Actor.main(async () => {
         await page.goto('https://ascehazardtool.org/', { waitUntil: 'networkidle2', timeout: 60000 });
 
         // --- Helper Functions ---
+        // optimized to fail fast (3s) so fallbacks trigger quickly
         const clickByText = async (tag, text) => {
             try {
                 const element = await page.waitForSelector(`::-p-xpath(//${tag}[contains(text(), "${text}")])`, { timeout: 3000 });
@@ -66,16 +67,24 @@ Actor.main(async () => {
                 'calcite-action[icon="x"]', 'button[title="Close"]', '.modal-close', 'span.esri-icon-close',
                 'div[role="button"][aria-label="Close"]', '.calcite-action', 'button.close', 'calcite-modal .close'
             ];
-            // Aggressive loop
-            for (let i = 0; i < 5; i++) {
-                await page.keyboard.press('Escape');
-                await new Promise(r => setTimeout(r, 500));
-                await page.evaluate((selectors) => {
-                    selectors.forEach(sel => { document.querySelectorAll(sel).forEach(el => el.click()); });
-                    const modals = document.querySelectorAll('calcite-modal, .modal, .popup');
-                    modals.forEach(m => m.style.display = 'none');
-                }, closeSelectors);
-                await new Promise(r => setTimeout(r, 1000));
+
+            // Check once quickly before entering loop
+            const needsPopupHandling = await page.evaluate((selectors) => {
+                return selectors.some(s => document.querySelector(s));
+            }, closeSelectors);
+
+            if (needsPopupHandling) {
+                // Aggressive loop only if needed
+                for (let i = 0; i < 3; i++) {
+                    await page.keyboard.press('Escape');
+                    await new Promise(r => setTimeout(r, 500));
+                    await page.evaluate((selectors) => {
+                        selectors.forEach(sel => { document.querySelectorAll(sel).forEach(el => el.click()); });
+                        const modals = document.querySelectorAll('calcite-modal, .modal, .popup');
+                        modals.forEach(m => m.style.display = 'none');
+                    }, closeSelectors);
+                    await new Promise(r => setTimeout(r, 500));
+                }
             }
         } catch (e) { console.log("Popup warning: " + e.message); }
 
@@ -94,7 +103,6 @@ Actor.main(async () => {
                             if (input.classList.contains('esri-input')) return input;
                         }
                     }
-
                     // Walk children to find shadow roots
                     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
                     let node;
@@ -114,40 +122,37 @@ Actor.main(async () => {
         try {
             const expandBtn = await page.$('.esri-icon-search, .esri-search__submit-button');
             if (expandBtn) await expandBtn.click();
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 500)); // Short wait for expansion
         } catch (e) { }
 
         let inputHandle = await findDeepInput();
 
         // Retry logic for finding input
         if (!inputHandle.id && !inputHandle.asElement()) {
-            console.log("Input not found instantly, waiting 3s...");
-            await new Promise(r => setTimeout(r, 3000));
+            console.log("Input not found instantly, waiting 2s...");
+            await new Promise(r => setTimeout(r, 2000));
             inputHandle = await findDeepInput();
         }
 
         if (inputHandle && inputHandle.asElement()) {
             console.log("Found input via Deep Shadow Walker!");
             await inputHandle.focus();
-            await page.keyboard.type(address, { delay: 100 });
+            await page.keyboard.type(address, { delay: 50 }); // Faster typing
         } else {
             console.log("Deep Walker failed. Trying Tab Navigation Fallback...");
             // Tab Navigation Fallback
             await page.keyboard.press('Tab');
             await page.keyboard.press('Tab');
-            await page.keyboard.press('Tab'); // Maybe 3 times?
-            await page.keyboard.type(address, { delay: 100 });
+            await page.keyboard.press('Tab');
+            await page.keyboard.type(address, { delay: 50 });
         }
-
-        // Dump HTML if we suspect failure (for debugging)
-        const htmlDump = await page.content();
-        await Actor.setValue('DEBUG_HTML', htmlDump, { contentType: 'text/html' });
 
         // Wait for suggestions or force Enter
         const suggestionSelector = '.esri-search__suggestions-list li, ul[role="listbox"] li';
         try {
             console.log("Waiting for address suggestions...");
-            await page.waitForSelector(suggestionSelector, { timeout: 5000 });
+            // Fast timeout - if they aren't there in 3s, they probably won't show
+            await page.waitForSelector(suggestionSelector, { timeout: 3000 });
             const suggestion = await page.$(suggestionSelector);
             if (suggestion) {
                 console.log("Clicking suggestion...");
@@ -158,19 +163,21 @@ Actor.main(async () => {
             }
         } catch (e) {
             console.log("No suggestions found (timeout). Force pressing Enter...");
-            // Ensure focus is still on input (try first selector as fallback)
             try { await inputHandle.focus(); } catch (e) { }
             await page.keyboard.press('Enter');
         }
 
         // Critical: Wait after address submission for map to zoom/update
-        console.log("Waiting 5s for map to update after address search...");
-        await new Promise(r => setTimeout(r, 5000));
+        console.log("Waiting for map update...");
+        // Replaced static 5s wait with smart wait? 
+        // Logic: Wait for the address text to effectively "settle" or the UI to change. 
+        // For safety/Map loading, a static wait is still safest, but we can reduce it if we detect success.
+        await new Promise(r => setTimeout(r, 3000));
 
         // --- 5. Select Risk Category II ---
         console.log("Setting Risk Category...");
-        await new Promise(r => setTimeout(r, 3000));
         try {
+            // Try explicit risk selector first
             const riskSelect = await page.$('select[aria-label*="Risk"], select');
             if (riskSelect) await riskSelect.select('II');
         } catch (e) { }
@@ -178,8 +185,22 @@ Actor.main(async () => {
         // --- 6. Select Load Type: Wind ---
         console.log("Selecting Wind Load...");
         try {
+            // FIXED: This logic was truncated previously. 
+            // 1. Try clicking the "Wind" text
             const windClicked = await clickByText('label', 'Wind');
-        } catch (e) { }
+            if (!windClicked) {
+                console.log("Label click failed, trying checkbox input directly...");
+                // 2. Fallback: Try clicking the input checkbox
+                const windCheckbox = await page.$('input[value="Wind"], input[name="Wind"]');
+                if (windCheckbox) {
+                    await windCheckbox.click();
+                } else {
+                    console.log("Could not find Wind checkbox!");
+                }
+            }
+        } catch (e) {
+            console.log("Error selecting Wind Load: " + e.message);
+        }
 
         // --- 7. View Results ---
         console.log("Clicking View Results...");
@@ -187,13 +208,13 @@ Actor.main(async () => {
 
         // --- 8. Extract Result ---
         console.log("Waiting for results...");
-
-        // 60s timeout for safety on cloud runners
+        // 60s timeout for results to appear
         await page.waitForFunction(() => document.body.innerText.includes('Vmph'), { timeout: 60000 });
-        await new Promise(r => setTimeout(r, 3000));
+
+        // Wait a tiny bit for the overlay to stabilize
+        await new Promise(r => setTimeout(r, 1000));
 
         const windSpeed = await page.evaluate(() => {
-            // Heuristic: find text containing "Vmph"
             const elements = document.querySelectorAll('*');
             for (let i = 0; i < elements.length; i++) {
                 const el = elements[i];
@@ -206,7 +227,6 @@ Actor.main(async () => {
 
         if (windSpeed) {
             console.log(`SUCCESS: Found Wind Speed: ${windSpeed}`);
-            // Push data to Apify dataset (this is the API response)
             await Actor.pushData({
                 address: address,
                 wind_speed: windSpeed,
@@ -225,9 +245,8 @@ Actor.main(async () => {
             if (page) {
                 const screenshotBuffer = await page.screenshot();
                 await Actor.setValue('ERROR_SCREENSHOT', screenshotBuffer, { contentType: 'image/png' });
-                console.log('Saved error screenshot to Key-Value Store as "ERROR_SCREENSHOT"');
             }
-        } catch (e) { console.log("Could not save screenshot"); }
+        } catch (e) { }
 
         await Actor.pushData({
             address: address,
