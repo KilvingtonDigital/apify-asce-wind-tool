@@ -26,17 +26,18 @@ Actor.main(async () => {
 
     const page = await browser.newPage();
 
-    // Helper to Save Debug Assets
-    const saveDebugAssets = async (prefix) => {
-        try {
-            if (page) {
-                const html = await page.content();
-                await Actor.setValue(`${prefix}_HTML`, html.substring(0, 500000), { contentType: 'text/html' }); // Limit size
-                const buffer = await page.screenshot();
-                await Actor.setValue(`${prefix}_SCREENSHOT`, buffer, { contentType: 'image/png' });
-                console.log(`[DEBUG] Saved assets for ${prefix}`);
-            }
-        } catch (e) { console.log(`[DEBUG] Failed to save assets: ${e.message}`); }
+    // --- Helper: Nuke Modals ---
+    const nukeModals = async () => {
+        await page.evaluate(() => {
+            console.log("Nuking modals...");
+            const selectors = ['calcite-modal', '.modal', '.popup', 'calcite-scrim', '.modal-backdrop', '.esri-popup'];
+            selectors.forEach(sel => {
+                document.querySelectorAll(sel).forEach(el => el.remove());
+            });
+            // Try to force close Esri popups via API if exposed (unlikely, but defensive)
+            const closeBtns = document.querySelectorAll('button[title="Close"], .esri-popup__button--close');
+            closeBtns.forEach(b => b.click());
+        });
     };
 
     try {
@@ -48,37 +49,33 @@ Actor.main(async () => {
         // --- Helper: Click by Text ---
         const clickByText = async (tag, text) => {
             const result = await page.evaluate((t, txt) => {
+                // Search deeply if possible, or just standard querySelectorAll
                 const elements = Array.from(document.querySelectorAll(t));
-                const found = elements.find(el => el.textContent.includes(txt));
+                // Try exact match first, then includes
+                let found = elements.find(el => el.textContent.trim() === txt);
+                if (!found) found = elements.find(el => el.textContent.includes(txt));
+
                 if (found) {
+                    found.scrollIntoView();
                     found.click();
                     return { success: true, count: elements.length, matched: found.outerHTML.substring(0, 50) };
                 }
                 return { success: false, count: elements.length };
             }, tag, text);
-            console.log(`[DEBUG] clickByText('${tag}', '${text}') => Success:${result.success}, Found:${result.count} tags`);
+            console.log(`[DEBUG] clickByText('${tag}', '${text}') => Success:${result.success}`);
             return result.success;
         };
 
         // --- 3. Handle Popups (Nuke Strategy) ---
         console.log("[DEBUG] Handling popups...");
-        await new Promise(r => setTimeout(r, 2000));
-
+        await new Promise(r => setTimeout(r, 3000));
         await clickByText('button', 'Got it!');
-
-        // Aggressive Modal Removal
-        await page.evaluate(() => {
-            console.log("Nuking modals...");
-            const selectors = ['calcite-modal', '.modal', '.popup', 'calcite-scrim', '.modal-backdrop'];
-            selectors.forEach(sel => {
-                document.querySelectorAll(sel).forEach(el => el.remove());
-            });
-        });
-        await new Promise(r => setTimeout(r, 1000));
+        await nukeModals();
 
         // --- 4. Input Address ---
         console.log("[DEBUG] Waiting 5s for Map Widget Hydration (Critical)...");
         await new Promise(r => setTimeout(r, 5000));
+        await nukeModals(); // Nuke again just in case
 
         // Deep Shadow Walker with Logging
         const findDeepInput = async () => {
@@ -87,7 +84,6 @@ Actor.main(async () => {
                 function traverse(node) {
                     if (!node) return null;
                     count++;
-                    // UPDATED MATCHERS based on screenshot
                     if (node.nodeType === 1 && (
                         node.matches('input[placeholder*="Find address"]') ||
                         node.matches('input[placeholder*="place"]') ||
@@ -137,6 +133,9 @@ Actor.main(async () => {
 
         // Suggestions
         console.log("[DEBUG] Waiting for suggestions...");
+        await new Promise(r => setTimeout(r, 2000));
+        await nukeModals();
+
         try {
             await page.waitForSelector('.esri-search__suggestions-list li', { timeout: 4000 });
             await page.click('.esri-search__suggestions-list li');
@@ -148,20 +147,32 @@ Actor.main(async () => {
 
         console.log("[DEBUG] Waiting 5s for map update...");
         await new Promise(r => setTimeout(r, 5000));
+        await nukeModals();
 
-        // --- 5. Settings ---
-        console.log("[DEBUG] Setting Risk Category...");
-        const riskSelected = await page.evaluate(() => {
-            const sels = Array.from(document.querySelectorAll('select'));
-            const risk = sels.find(s => s.ariaLabel && s.ariaLabel.includes('Risk')) || sels[0];
-            if (risk) {
-                risk.value = 'II';
-                risk.dispatchEvent(new Event('change'));
-                return { success: true, count: sels.length };
-            }
-            return { success: false, count: sels.length };
-        });
-        console.log(`[DEBUG] Risk Selection: Success=${riskSelected.success}, Found ${riskSelected.count} selects`);
+        // --- 5. Settings (UI Interaction Fix) ---
+        console.log("[DEBUG] Setting Risk Category (UI Click)...");
+        // 1. Click the dropdown to open it
+        // Try looking for the visible text "Select Risk"
+        const dropdownClicked = await clickByText('*', 'Select Risk');
+        if (!dropdownClicked) {
+            console.log("[DEBUG] 'Select Risk' text not found. Trying Force-Value method just in case...");
+            // Fallback to old method if UI click fails, but strictly safer
+            await page.evaluate(() => {
+                const selects = document.querySelectorAll('calcite-select');
+                if (selects.length > 0) {
+                    selects[0].value = "II";
+                }
+            });
+        }
+        await new Promise(r => setTimeout(r, 1000));
+
+        // 2. Click the option "Risk Category II"
+        console.log("[DEBUG] Selecting 'Risk Category II'...");
+        const optionClicked = await clickByText('*', 'Risk Category II');
+        if (!optionClicked) {
+            console.log("[DEBUG] 'Risk Category II' not found via click. Trying 'II'...");
+            await clickByText('*', 'II');
+        }
 
         // --- 6. Wind Load ---
         console.log("[DEBUG] Selecting Wind Load...");
@@ -177,9 +188,24 @@ Actor.main(async () => {
         });
         console.log(`[DEBUG] Wind Selection Result: ${windSelected}`);
 
+        // Force update just in case
+        await new Promise(r => setTimeout(r, 1000));
+
         // --- 7. Results ---
         console.log("[DEBUG] Clicking View Results...");
-        await clickByText('button', 'View Results');
+        await nukeModals();
+
+        // Try multiple button text variations
+        let resultsClicked = await clickByText('button', 'View Results');
+        if (!resultsClicked) resultsClicked = await clickByText('span', 'View Results');
+        if (!resultsClicked) {
+            console.log("[DEBUG] 'View Results' text click failed. Searching for button attribute...");
+            resultsClicked = await page.evaluate(() => {
+                const btn = document.querySelector('button[title="View Results"]');
+                if (btn) { btn.click(); return true; }
+                return false;
+            });
+        }
 
         console.log("[DEBUG] Waiting for 'Vmph'...");
         try {
