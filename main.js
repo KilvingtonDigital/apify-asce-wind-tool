@@ -41,13 +41,34 @@ Actor.main(async () => {
 
     // --- Helper: Nuke Modals (Nuclear Option) ---
     const nukeModals = async () => {
+        // 1. CSS Injection
         await page.addStyleTag({ content: 'calcite-modal, .modal, .popup, .esri-popup, calcite-scrim, .modal-backdrop { display: none !important; opacity: 0 !important; pointer-events: none !important; z-index: -9999 !important; }' });
+
+        // 2. DOM Removal (Selector & Text Based)
         await page.evaluate(() => {
             console.log("Nuking modals via DOM removal...");
             const selectors = ['calcite-modal', '.modal', '.popup', 'calcite-scrim', '.modal-backdrop', '.esri-popup'];
             selectors.forEach(sel => {
                 document.querySelectorAll(sel).forEach(el => el.remove());
             });
+
+            // Text-based Seek & Destroy (for stubborn "Welcome" modal)
+            const allElements = document.querySelectorAll('*');
+            for (const el of allElements) {
+                if (el.shadowRoot) continue;
+                if (el.textContent && el.textContent.includes("Welcome to the ASCE Hazard Tool")) {
+                    let container = el;
+                    while (container && container.parentElement && container !== document.body) {
+                        if (container.tagName.includes('MODAL') || container.tagName.includes('POPUP') || container.classList.contains('modal') || container.style.position === 'absolute' || container.style.position === 'fixed') {
+                            console.log(`Removing specific modal container: ${container.tagName}`);
+                            container.remove();
+                            break;
+                        }
+                        container = container.parentElement;
+                    }
+                }
+            }
+
             const closeBtns = document.querySelectorAll('button[title="Close"], .esri-popup__button--close');
             closeBtns.forEach(b => b.click());
         });
@@ -171,6 +192,19 @@ Actor.main(async () => {
 
         riskSuccess = await clickByText('*', 'Risk Category II');
         if (!riskSuccess) riskSuccess = await clickByText('*', 'II');
+
+        // Verification: Check if UI updated
+        const isVerified = await page.evaluate(() => {
+            const html = document.body.innerHTML;
+            // If we see "Select Risk" still dominant or don't see "Risk Category II" as selected value
+            // It's safer to assume failure and let DOM manipulate it.
+            return document.body.innerText.includes("Risk Category II");
+        });
+
+        if (!isVerified && riskSuccess) {
+            console.log("[DEBUG] Click reported success but 'Risk Category II' text is missing. Forcing Deep DOM Set.");
+            riskSuccess = false;
+        }
 
         // Strategy B: Force Value via DOM/ShadowDOM if Click Failed
         if (!riskSuccess) {
