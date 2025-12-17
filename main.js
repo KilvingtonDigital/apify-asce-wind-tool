@@ -15,13 +15,16 @@ Actor.main(async () => {
 
     console.log(`[DEBUG] Starting ASCE Wind Speed Lookup for: ${address}`);
 
-    // 2. Launch Puppeteer
+    // 2. Launch Puppeteer with Video Recording
     const browser = await launchPuppeteer({
         useChrome: true,
         launchOptions: {
             headless: isLocal ? false : 'new',
             args: ['--window-size=1280,800', '--start-maximized']
-        }
+        },
+        // Enable video recording on Apify
+        recordVideo: !isLocal,
+        recordVideoDir: './videos'
     });
 
     const page = await browser.newPage();
@@ -32,11 +35,72 @@ Actor.main(async () => {
             if (page) {
                 const html = await page.content();
                 await Actor.setValue(`${prefix}_HTML`, html.substring(0, 500000), { contentType: 'text/html' });
-                const buffer = await page.screenshot();
+                const buffer = await page.screenshot({ fullPage: true });
                 await Actor.setValue(`${prefix}_SCREENSHOT`, buffer, { contentType: 'image/png' });
                 console.log(`[DEBUG] Saved assets for ${prefix}`);
             }
         } catch (e) { console.log(`[DEBUG] Failed to save assets: ${e.message}`); }
+    };
+
+    // --- Helper: Inspect Elements ---
+    const inspectElements = async (description) => {
+        console.log(`\n=== ELEMENT INSPECTION: ${description} ===`);
+        const info = await page.evaluate(() => {
+            const results = {
+                buttons: [],
+                selects: [],
+                modals: [],
+                inputs: [],
+                visibleText: document.body.innerText.substring(0, 500)
+            };
+
+            // Inspect buttons
+            document.querySelectorAll('button').forEach((btn, i) => {
+                if (i < 10) { // Limit to first 10
+                    results.buttons.push({
+                        text: btn.textContent.trim().substring(0, 50),
+                        title: btn.getAttribute('title'),
+                        disabled: btn.disabled,
+                        class: btn.className,
+                        visible: btn.offsetParent !== null
+                    });
+                }
+            });
+
+            // Inspect selects (including calcite-select)
+            document.querySelectorAll('select, calcite-select').forEach((sel, i) => {
+                if (i < 5) {
+                    results.selects.push({
+                        tagName: sel.tagName,
+                        value: sel.value,
+                        options: sel.options ? Array.from(sel.options).map(o => o.text) : [],
+                        class: sel.className
+                    });
+                }
+            });
+
+            // Inspect modals
+            document.querySelectorAll('calcite-modal, .modal, [role="dialog"]').forEach((modal, i) => {
+                if (i < 5) {
+                    results.modals.push({
+                        tagName: modal.tagName,
+                        class: modal.className,
+                        visible: modal.offsetParent !== null,
+                        text: modal.textContent.trim().substring(0, 100)
+                    });
+                }
+            });
+
+            return results;
+        });
+
+        console.log('Buttons:', JSON.stringify(info.buttons, null, 2));
+        console.log('Selects:', JSON.stringify(info.selects, null, 2));
+        console.log('Modals:', JSON.stringify(info.modals, null, 2));
+        console.log('Visible Text Preview:', info.visibleText);
+        console.log('=== END INSPECTION ===\n');
+
+        return info;
     };
 
     // --- Helper: Nuke Modals (Nuclear Option) ---
@@ -105,6 +169,7 @@ Actor.main(async () => {
         await new Promise(r => setTimeout(r, 3000));
         await clickByText('button', 'Got it!');
         await nukeModals();
+        await inspectElements('After Initial Modal Handling');
 
         // --- 4. Input Address ---
         console.log("[DEBUG] Waiting 5s for Map Widget Hydration (Critical)...");
@@ -182,6 +247,7 @@ Actor.main(async () => {
         console.log("[DEBUG] Waiting 5s for map update...");
         await new Promise(r => setTimeout(r, 5000));
         await nukeModals();
+        await inspectElements('Before Risk Category Selection');
 
         // --- 5. Settings (Risk Category) ---
         console.log("[DEBUG] Setting Risk Category...");
@@ -259,6 +325,7 @@ Actor.main(async () => {
         // --- 7. Results ---
         console.log("[DEBUG] Clicking View Results...");
         await nukeModals();
+        await inspectElements('Before Clicking View Results');
 
         // Try multiple button text variations with global search
         let resultsClicked = await clickByText('*', 'View Results');
@@ -321,6 +388,30 @@ Actor.main(async () => {
         });
         throw error;
     } finally {
+        // Save video recording if it exists
+        if (!isLocal) {
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const videoDir = './videos';
+                
+                if (fs.existsSync(videoDir)) {
+                    const files = fs.readdirSync(videoDir);
+                    for (const file of files) {
+                        if (file.endsWith('.webm') || file.endsWith('.mp4')) {
+                            const videoPath = path.join(videoDir, file);
+                            const videoBuffer = fs.readFileSync(videoPath);
+                            await Actor.setValue('RUN_VIDEO', videoBuffer, { contentType: 'video/webm' });
+                            console.log(`[DEBUG] Uploaded video: ${file}`);
+                            break;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log(`[DEBUG] Failed to upload video: ${e.message}`);
+            }
+        }
+        
         if (browser) await browser.close();
     }
 });
