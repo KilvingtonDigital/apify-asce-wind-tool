@@ -13,7 +13,7 @@ Actor.main(async () => {
     const address = input && input.address;
     if (!address) throw new Error('Input must contain "address" field.');
 
-    console.log(`Starting ASCE Wind Speed Lookup for: ${address} `);
+    console.log(`[DEBUG] Starting ASCE Wind Speed Lookup for: ${address}`);
 
     // 2. Launch Puppeteer
     const browser = await launchPuppeteer({
@@ -26,55 +26,103 @@ Actor.main(async () => {
 
     const page = await browser.newPage();
 
+    // Helper to Save Debug Assets
+    const saveDebugAssets = async (prefix) => {
+        try {
+            if (page) {
+                const html = await page.content();
+                await Actor.setValue(`${prefix}_HTML`, html.substring(0, 500000), { contentType: 'text/html' }); // Limit size
+                const buffer = await page.screenshot();
+                await Actor.setValue(`${prefix}_SCREENSHOT`, buffer, { contentType: 'image/png' });
+                console.log(`[DEBUG] Saved assets for ${prefix}`);
+            }
+        } catch (e) { console.log(`[DEBUG] Failed to save assets: ${e.message}`); }
+    };
+
     try {
         await page.setViewport({ width: 1280, height: 800 });
 
-        console.log('Navigating to ASCE Hazard Tool...');
+        console.log('[DEBUG] Navigating to ASCE Hazard Tool...');
         await page.goto('https://ascehazardtool.org/', { waitUntil: 'networkidle2', timeout: 60000 });
 
-        // --- Helper: Click by Text (Client-Side for Speed) ---
+        // --- Helper: Click by Text ---
         const clickByText = async (tag, text) => {
-            return await page.evaluate((t, txt) => {
+            const result = await page.evaluate((t, txt) => {
                 const elements = Array.from(document.querySelectorAll(t));
                 const found = elements.find(el => el.textContent.includes(txt));
                 if (found) {
                     found.click();
-                    return true;
+                    return { success: true, count: elements.length, matched: found.outerHTML.substring(0, 50) };
                 }
-                return false;
+                return { success: false, count: elements.length };
             }, tag, text);
+            console.log(`[DEBUG] clickByText('${tag}', '${text}') => Success:${result.success}, Found:${result.count} tags`);
+            return result.success;
         };
 
-        // --- 3. Handle Popups ---
-        console.log("Handling popups...");
+        // --- 3. Handle Popups (Aggressive & Verified) ---
+        console.log("[DEBUG] Handling popups...");
         await new Promise(r => setTimeout(r, 2000)); // Let popups appear
-        await clickByText('button', 'Got it!');
 
-        // Defensive Popup Closing
+        // 1. Try "Got it!" button
+        const gotItClicked = await clickByText('button', 'Got it!');
+        if (gotItClicked) console.log("[DEBUG] Clicked 'Got it!' button");
+
+        // 2. Try Standard Close Icons
         const closeSelectors = [
             'calcite-action[icon="x"]', 'button[title="Close"]', '.modal-close', 'span.esri-icon-close',
-            'div[role="button"][aria-label="Close"]', '.calcite-action', 'button.close', 'calcite-modal .close'
+            'div[role="button"][aria-label="Close"]', '.calcite-action', 'button.close', 'calcite-modal .close',
+            'calcite-icon[icon="x"]'
         ];
-        // Quick burst of Escape keys
-        for (let i = 0; i < 3; i++) {
+
+        // Loop to clear overlays
+        for (let i = 0; i < 5; i++) {
+            // Check if any modal is visible
+            const isModalVisible = await page.evaluate(() => {
+                const modal = document.querySelector('calcite-modal, .modal, .popup');
+                return modal && modal.offsetParent !== null; // Visible
+            });
+
+            if (!isModalVisible && i > 0) {
+                console.log("[DEBUG] No visible modals detected. Proceeding.");
+                break;
+            }
+
+            console.log(`[DEBUG] Attempt ${i + 1} to close popups...`);
             await page.keyboard.press('Escape');
             await new Promise(r => setTimeout(r, 300));
-            await page.evaluate((sels) => {
-                sels.forEach(s => document.querySelectorAll(s).forEach(el => el.click()));
+
+            await page.evaluate((selectors) => {
+                // Click all close buttons found
+                selectors.forEach(sel => {
+                    document.querySelectorAll(sel).forEach(el => {
+                        console.log("Clicking generic close: " + sel);
+                        el.click();
+                    });
+                });
+                // Force close specific Esri modals if possible
+                const calciteModals = document.querySelectorAll('calcite-modal');
+                calciteModals.forEach(m => {
+                    m.removeAttribute('active');
+                    m.removeAttribute('open');
+                    m.style.display = 'none'; // Force hide
+                });
             }, closeSelectors);
+
+            await new Promise(r => setTimeout(r, 1000));
         }
 
         // --- 4. Input Address ---
-        console.log("Waiting 5s for Map Widget Hydration (Critical)...");
+        console.log("[DEBUG] Waiting 5s for Map Widget Hydration (Critical)...");
         await new Promise(r => setTimeout(r, 5000));
 
-        console.log(`Searching for address: ${address} `);
-
-        // Deep Shadow Walker (Simpler & More Robust)
+        // Deep Shadow Walker with Logging
         const findDeepInput = async () => {
             return await page.evaluateHandle(() => {
+                let count = 0;
                 function traverse(node) {
                     if (!node) return null;
+                    count++;
                     if (node.nodeType === 1 && (node.matches('input[placeholder*="Location"]') || node.matches('input.esri-input'))) {
                         return node;
                     }
@@ -94,92 +142,83 @@ Actor.main(async () => {
             });
         };
 
-        // Attempt to expand widget first
-        await page.evaluate(() => {
-            const btn = document.querySelector('.esri-icon-search, .esri-search__submit-button');
-            if (btn) btn.click();
-        });
-        await new Promise(r => setTimeout(r, 1000));
-
+        console.log(`[DEBUG] Searching for input field...`);
         let inputHandle = await findDeepInput();
 
-        // Retry Loop
         if (!inputHandle.id && !inputHandle.asElement()) {
-            console.log("Input not found, retrying walker...");
+            console.log("[DEBUG] Input not found initially, retrying...");
             await new Promise(r => setTimeout(r, 2000));
             inputHandle = await findDeepInput();
         }
 
         if (inputHandle && inputHandle.asElement()) {
-            console.log("Found input!");
+            console.log("[DEBUG] Found input via Deep Shadow Walker!");
             await inputHandle.focus();
-            // Clear existing text just in case
-            await page.keyboard.down('Control');
-            await page.keyboard.press('A');
-            await page.keyboard.up('Control');
-            await page.keyboard.press('Backspace');
-
+            // Just force type
             await page.keyboard.type(address, { delay: 100 });
         } else {
-            console.log("Deep Walker failed. Using Tab Fallback.");
+            console.log("[DEBUG] Deep Walker failed completely. Saving state...");
+            await saveDebugAssets('INPUT_FAILURE');
+            console.log("[DEBUG] Trying Tab Fallback...");
             await page.keyboard.press('Tab');
             await page.keyboard.press('Tab');
             await page.keyboard.type(address, { delay: 100 });
         }
 
         // Suggestions
-        console.log("Waiting for suggestions...");
+        console.log("[DEBUG] Waiting for suggestions...");
         try {
             await page.waitForSelector('.esri-search__suggestions-list li', { timeout: 4000 });
             await page.click('.esri-search__suggestions-list li');
+            console.log("[DEBUG] Clicked suggestion.");
         } catch (e) {
-            console.log("No suggestions. Pressing Enter.");
+            console.log("[DEBUG] No suggestions found. Pressing Enter.");
             await page.keyboard.press('Enter');
         }
 
-        console.log("Waiting 5s for map update...");
+        console.log("[DEBUG] Waiting 5s for map update...");
         await new Promise(r => setTimeout(r, 5000));
 
         // --- 5. Settings ---
-        console.log("Setting Risk Category...");
+        console.log("[DEBUG] Setting Risk Category...");
         const riskSelected = await page.evaluate(() => {
             const sels = Array.from(document.querySelectorAll('select'));
             const risk = sels.find(s => s.ariaLabel && s.ariaLabel.includes('Risk')) || sels[0];
             if (risk) {
                 risk.value = 'II';
                 risk.dispatchEvent(new Event('change'));
-                return true;
+                return { success: true, count: sels.length };
             }
-            return false;
+            return { success: false, count: sels.length };
         });
+        console.log(`[DEBUG] Risk Selection: Success=${riskSelected.success}, Found ${riskSelected.count} selects`);
 
         // --- 6. Wind Load ---
-        console.log("Selecting Wind Load...");
-        // Use evaluate to avoid 3-minute Puppeteer hang
+        console.log("[DEBUG] Selecting Wind Load...");
         const windSelected = await page.evaluate(() => {
-            // Try label
             const labels = Array.from(document.querySelectorAll('label'));
             const windLabel = labels.find(l => l.textContent.includes('Wind'));
-            if (windLabel) {
-                windLabel.click();
-                return true;
-            }
-            // Try input
+            if (windLabel) { windLabel.click(); return "Label Clicked"; }
+
             const input = document.querySelector('input[value="Wind"], input[name="Wind"]');
-            if (input) {
-                input.click();
-                return true;
-            }
-            return false;
+            if (input) { input.click(); return "Input Clicked"; }
+
+            return "Failed";
         });
-        if (!windSelected) console.log("Warning: Could not select Wind Load.");
+        console.log(`[DEBUG] Wind Selection Result: ${windSelected}`);
 
         // --- 7. Results ---
-        console.log("Clicking View Results...");
+        console.log("[DEBUG] Clicking View Results...");
         await clickByText('button', 'View Results');
 
-        console.log("Waiting for 'Vmph'...");
-        await page.waitForFunction(() => document.body.innerText.includes('Vmph'), { timeout: 60000 });
+        console.log("[DEBUG] Waiting for 'Vmph'...");
+        try {
+            await page.waitForFunction(() => document.body.innerText.includes('Vmph'), { timeout: 60000 });
+        } catch (e) {
+            console.log("[DEBUG] Timed out waiting for Vmph. Saving dump...");
+            await saveDebugAssets('TIMEOUT_DUMP');
+            throw e;
+        }
 
         const windSpeed = await page.evaluate(() => {
             const element = Array.from(document.querySelectorAll('*'))
@@ -188,21 +227,27 @@ Actor.main(async () => {
         });
 
         if (windSpeed) {
-            console.log(`SUCCESS: ${windSpeed} `);
+            console.log(`[DEBUG] SUCCESS: ${windSpeed}`);
             await Actor.pushData({ address, wind_speed: windSpeed, status: 'success' });
         } else {
+            console.log("[DEBUG] Vmph not found in final check.");
+            await saveDebugAssets('MISSING_DATA');
             throw new Error("Vmph not found.");
         }
 
     } catch (error) {
-        console.error("Failed: " + error.message);
+        console.error("[CRITICAL FAILURE] " + error.message);
+        await saveDebugAssets('FINAL_ERROR');
         try {
-            if (page) {
-                const buffer = await page.screenshot();
-                await Actor.setValue('ERROR_SCREENSHOT', buffer, { contentType: 'image/png' });
-            }
+            require('fs').writeFileSync('error.log', error.stack || error.message);
         } catch (e) { }
-        await Actor.pushData({ address, status: 'failed', error: error.message });
+
+        await Actor.pushData({
+            address,
+            status: 'failed',
+            error: error.message,
+            stack: error.stack
+        });
         throw error;
     } finally {
         if (browser) await browser.close();
