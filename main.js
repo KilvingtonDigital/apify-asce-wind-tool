@@ -26,6 +26,19 @@ Actor.main(async () => {
 
     const page = await browser.newPage();
 
+    // --- Helper: Save Debug Assets ---
+    const saveDebugAssets = async (prefix) => {
+        try {
+            if (page) {
+                const html = await page.content();
+                await Actor.setValue(`${prefix}_HTML`, html.substring(0, 500000), { contentType: 'text/html' });
+                const buffer = await page.screenshot();
+                await Actor.setValue(`${prefix}_SCREENSHOT`, buffer, { contentType: 'image/png' });
+                console.log(`[DEBUG] Saved assets for ${prefix}`);
+            }
+        } catch (e) { console.log(`[DEBUG] Failed to save assets: ${e.message}`); }
+    };
+
     // --- Helper: Nuke Modals ---
     const nukeModals = async () => {
         await page.evaluate(() => {
@@ -49,8 +62,8 @@ Actor.main(async () => {
         // --- Helper: Click by Text ---
         const clickByText = async (tag, text) => {
             const result = await page.evaluate((t, txt) => {
-                // Search deeply if possible, or just standard querySelectorAll
-                const elements = Array.from(document.querySelectorAll(t));
+                // Search all elements if tag is '*'
+                const elements = Array.from(document.querySelectorAll(t === '*' ? '*' : t));
                 // Try exact match first, then includes
                 let found = elements.find(el => el.textContent.trim() === txt);
                 if (!found) found = elements.find(el => el.textContent.includes(txt));
@@ -195,16 +208,16 @@ Actor.main(async () => {
         console.log("[DEBUG] Clicking View Results...");
         await nukeModals();
 
-        // Try multiple button text variations
-        let resultsClicked = await clickByText('button', 'View Results');
-        if (!resultsClicked) resultsClicked = await clickByText('span', 'View Results');
+        // Try multiple button text variations with global search
+        let resultsClicked = await clickByText('*', 'View Results'); // Try broad search first
         if (!resultsClicked) {
-            console.log("[DEBUG] 'View Results' text click failed. Searching for button attribute...");
+            console.log("[DEBUG] 'View Results' text click failed. Searching for button attribute via evaluate...");
             resultsClicked = await page.evaluate(() => {
-                const btn = document.querySelector('button[title="View Results"]');
+                const btn = document.querySelector('button[title="View Results"], div[title="View Results"], span[title="View Results"]');
                 if (btn) { btn.click(); return true; }
                 return false;
             });
+            console.log(`[DEBUG] Attribute click result: ${resultsClicked}`);
         }
 
         console.log("[DEBUG] Waiting for 'Vmph'...");
