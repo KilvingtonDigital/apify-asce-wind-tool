@@ -39,15 +39,15 @@ Actor.main(async () => {
         } catch (e) { console.log(`[DEBUG] Failed to save assets: ${e.message}`); }
     };
 
-    // --- Helper: Nuke Modals ---
+    // --- Helper: Nuke Modals (Nuclear Option) ---
     const nukeModals = async () => {
+        await page.addStyleTag({ content: 'calcite-modal, .modal, .popup, .esri-popup, calcite-scrim, .modal-backdrop { display: none !important; opacity: 0 !important; pointer-events: none !important; z-index: -9999 !important; }' });
         await page.evaluate(() => {
-            console.log("Nuking modals...");
+            console.log("Nuking modals via DOM removal...");
             const selectors = ['calcite-modal', '.modal', '.popup', 'calcite-scrim', '.modal-backdrop', '.esri-popup'];
             selectors.forEach(sel => {
                 document.querySelectorAll(sel).forEach(el => el.remove());
             });
-            // Try to force close Esri popups via API if exposed (unlikely, but defensive)
             const closeBtns = document.querySelectorAll('button[title="Close"], .esri-popup__button--close');
             closeBtns.forEach(b => b.click());
         });
@@ -162,29 +162,47 @@ Actor.main(async () => {
         await new Promise(r => setTimeout(r, 5000));
         await nukeModals();
 
-        // --- 5. Settings (UI Interaction Fix) ---
-        console.log("[DEBUG] Setting Risk Category (UI Click)...");
-        // 1. Click the dropdown to open it
-        // Try looking for the visible text "Select Risk"
-        const dropdownClicked = await clickByText('*', 'Select Risk');
-        if (!dropdownClicked) {
-            console.log("[DEBUG] 'Select Risk' text not found. Trying Force-Value method just in case...");
-            // Fallback to old method if UI click fails, but strictly safer
-            await page.evaluate(() => {
-                const selects = document.querySelectorAll('calcite-select');
-                if (selects.length > 0) {
-                    selects[0].value = "II";
-                }
-            });
-        }
+        // --- 5. Settings (Risk Category) ---
+        console.log("[DEBUG] Setting Risk Category...");
+        // Strategy A: UI Click
+        let riskSuccess = false;
+        await clickByText('*', 'Select Risk');
         await new Promise(r => setTimeout(r, 1000));
 
-        // 2. Click the option "Risk Category II"
-        console.log("[DEBUG] Selecting 'Risk Category II'...");
-        const optionClicked = await clickByText('*', 'Risk Category II');
-        if (!optionClicked) {
-            console.log("[DEBUG] 'Risk Category II' not found via click. Trying 'II'...");
-            await clickByText('*', 'II');
+        riskSuccess = await clickByText('*', 'Risk Category II');
+        if (!riskSuccess) riskSuccess = await clickByText('*', 'II');
+
+        // Strategy B: Force Value via DOM/ShadowDOM if Click Failed
+        if (!riskSuccess) {
+            console.log("[DEBUG] UI Click failed. Attempting deep DOM set...");
+            riskSuccess = await page.evaluate(() => {
+                function findCalciteSelect(node) {
+                    if (!node) return null;
+                    if (node.tagName === 'CALCITE-SELECT' || (node.classList && node.classList.contains('hazard-select'))) return node;
+                    if (node.shadowRoot) {
+                        const found = findCalciteSelect(node.shadowRoot);
+                        if (found) return found;
+                    }
+                    if (node.children) {
+                        for (let child of node.children) {
+                            const found = findCalciteSelect(child);
+                            if (found) return found;
+                        }
+                    }
+                    return null;
+                }
+
+                // Try finding any select first
+                let select = document.querySelector('calcite-select');
+                if (!select) select = findCalciteSelect(document.body);
+
+                if (select) {
+                    select.value = 'II'; // Set value directly
+                    return true;
+                }
+                return false;
+            });
+            console.log(`[DEBUG] Deep DOM Set result: ${riskSuccess}`);
         }
 
         // --- 6. Wind Load ---
@@ -209,15 +227,25 @@ Actor.main(async () => {
         await nukeModals();
 
         // Try multiple button text variations with global search
-        let resultsClicked = await clickByText('*', 'View Results'); // Try broad search first
+        let resultsClicked = await clickByText('*', 'View Results');
         if (!resultsClicked) {
-            console.log("[DEBUG] 'View Results' text click failed. Searching for button attribute via evaluate...");
+            console.log("[DEBUG] 'View Results' text click failed. Searching specific selector...");
             resultsClicked = await page.evaluate(() => {
                 const btn = document.querySelector('button[title="View Results"], div[title="View Results"], span[title="View Results"]');
                 if (btn) { btn.click(); return true; }
+                // Try looking for button with text content manually
+                const allBtns = Array.from(document.querySelectorAll('button'));
+                const textBtn = allBtns.find(b => b.textContent && b.textContent.includes('View Result'));
+                if (textBtn) { textBtn.click(); return true; }
                 return false;
             });
-            console.log(`[DEBUG] Attribute click result: ${resultsClicked}`);
+        }
+        console.log(`[DEBUG] View Results Clicked: ${resultsClicked}`);
+
+        if (!resultsClicked) {
+            console.log("[DEBUG] CRITICAL: Could not click View Results. Dumping state.");
+            await saveDebugAssets('VIEW_RESULTS_FAIL');
+            throw new Error("Could not click View Results button");
         }
 
         console.log("[DEBUG] Waiting for 'Vmph'...");
