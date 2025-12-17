@@ -60,57 +60,21 @@ Actor.main(async () => {
             return result.success;
         };
 
-        // --- 3. Handle Popups (Aggressive & Verified) ---
+        // --- 3. Handle Popups (Nuke Strategy) ---
         console.log("[DEBUG] Handling popups...");
-        await new Promise(r => setTimeout(r, 2000)); // Let popups appear
+        await new Promise(r => setTimeout(r, 2000));
 
-        // 1. Try "Got it!" button
-        const gotItClicked = await clickByText('button', 'Got it!');
-        if (gotItClicked) console.log("[DEBUG] Clicked 'Got it!' button");
+        await clickByText('button', 'Got it!');
 
-        // 2. Try Standard Close Icons
-        const closeSelectors = [
-            'calcite-action[icon="x"]', 'button[title="Close"]', '.modal-close', 'span.esri-icon-close',
-            'div[role="button"][aria-label="Close"]', '.calcite-action', 'button.close', 'calcite-modal .close',
-            'calcite-icon[icon="x"]'
-        ];
-
-        // Loop to clear overlays
-        for (let i = 0; i < 5; i++) {
-            // Check if any modal is visible
-            const isModalVisible = await page.evaluate(() => {
-                const modal = document.querySelector('calcite-modal, .modal, .popup');
-                return modal && modal.offsetParent !== null; // Visible
+        // Aggressive Modal Removal
+        await page.evaluate(() => {
+            console.log("Nuking modals...");
+            const selectors = ['calcite-modal', '.modal', '.popup', 'calcite-scrim', '.modal-backdrop'];
+            selectors.forEach(sel => {
+                document.querySelectorAll(sel).forEach(el => el.remove());
             });
-
-            if (!isModalVisible && i > 0) {
-                console.log("[DEBUG] No visible modals detected. Proceeding.");
-                break;
-            }
-
-            console.log(`[DEBUG] Attempt ${i + 1} to close popups...`);
-            await page.keyboard.press('Escape');
-            await new Promise(r => setTimeout(r, 300));
-
-            await page.evaluate((selectors) => {
-                // Click all close buttons found
-                selectors.forEach(sel => {
-                    document.querySelectorAll(sel).forEach(el => {
-                        console.log("Clicking generic close: " + sel);
-                        el.click();
-                    });
-                });
-                // Force close specific Esri modals if possible
-                const calciteModals = document.querySelectorAll('calcite-modal');
-                calciteModals.forEach(m => {
-                    m.removeAttribute('active');
-                    m.removeAttribute('open');
-                    m.style.display = 'none'; // Force hide
-                });
-            }, closeSelectors);
-
-            await new Promise(r => setTimeout(r, 1000));
-        }
+        });
+        await new Promise(r => setTimeout(r, 1000));
 
         // --- 4. Input Address ---
         console.log("[DEBUG] Waiting 5s for Map Widget Hydration (Critical)...");
@@ -123,7 +87,13 @@ Actor.main(async () => {
                 function traverse(node) {
                     if (!node) return null;
                     count++;
-                    if (node.nodeType === 1 && (node.matches('input[placeholder*="Location"]') || node.matches('input.esri-input'))) {
+                    // UPDATED MATCHERS based on screenshot
+                    if (node.nodeType === 1 && (
+                        node.matches('input[placeholder*="Find address"]') ||
+                        node.matches('input[placeholder*="place"]') ||
+                        node.matches('input[placeholder*="Location"]') ||
+                        node.matches('input.esri-input')
+                    )) {
                         return node;
                     }
                     if (node.shadowRoot) {
