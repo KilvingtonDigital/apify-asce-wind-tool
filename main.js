@@ -122,37 +122,57 @@ Actor.main(async () => {
         console.log('[DEBUG] Navigating to ASCE Hazard Tool...');
         await page.goto('https://ascehazardtool.org/', { waitUntil: 'networkidle', timeout: 60000 });
 
-        // 5. Close Welcome Modal (CRITICAL - must be first)
-        console.log('[DEBUG] Closing welcome modal...');
-        await page.waitForTimeout(2000); // Wait for modal to fully render
+        // 5. Close Welcome Modal (CRITICAL - requires MOUSE interaction)
+        console.log('[DEBUG] Closing welcome modal with mouse...');
+        await page.waitForTimeout(3000); // Wait for modal to fully render
 
+        // Find the X button and click it with mouse
         try {
-            // Strategy 1: Click the X button in the modal
-            const closeButton = await page.locator('button[aria-label="Close"], button[title="Close"], .modal-close, [class*="close"]').first();
-            if (await closeButton.isVisible({ timeout: 3000 })) {
-                await closeButton.click();
-                console.log('[DEBUG] Clicked X button on welcome modal');
+            console.log('[DEBUG] Looking for close button...');
+
+            // Get the close button coordinates using DOM query
+            const buttonCoords = await page.evaluate(() => {
+                // Try multiple selectors
+                const selectors = [
+                    'button[aria-label="Close"]',
+                    'button[title="Close"]',
+                    'calcite-action[icon="x"]',
+                    '.modal-close',
+                    'button.close',
+                    '[class*="close"]'
+                ];
+
+                for (const selector of selectors) {
+                    const button = document.querySelector(selector);
+                    if (button) {
+                        const rect = button.getBoundingClientRect();
+                        return {
+                            x: rect.left + rect.width / 2,
+                            y: rect.top + rect.height / 2,
+                            selector: selector
+                        };
+                    }
+                }
+                return null;
+            });
+
+            if (buttonCoords) {
+                console.log(`[DEBUG] Found close button at (${buttonCoords.x}, ${buttonCoords.y}) using ${buttonCoords.selector}`);
+
+                // Move mouse and click
+                await page.mouse.move(buttonCoords.x, buttonCoords.y, { steps: 10 });
+                await page.waitForTimeout(500);
+                await page.mouse.click(buttonCoords.x, buttonCoords.y);
+
+                console.log('[DEBUG] Clicked X button with mouse');
+                await page.waitForTimeout(2000);
+            } else {
+                console.log('[DEBUG] Could not find X button, trying Escape key');
+                await page.keyboard.press('Escape');
+                await page.waitForTimeout(1000);
             }
         } catch (e) {
-            console.log('[DEBUG] X button not found, trying alternative methods...');
-        }
-
-        // Strategy 2: Press Escape key
-        try {
-            await page.keyboard.press('Escape');
-            await page.waitForTimeout(1000);
-            console.log('[DEBUG] Pressed Escape to close modal');
-        } catch (e) {
-            console.log('[DEBUG] Escape key did not work');
-        }
-
-        // Strategy 3: Click outside the modal (on the map)
-        try {
-            await page.click('body', { position: { x: 500, y: 400 } });
-            await page.waitForTimeout(1000);
-            console.log('[DEBUG] Clicked outside modal');
-        } catch (e) {
-            console.log('[DEBUG] Click outside did not work');
+            console.log(`[DEBUG] Modal close failed: ${e.message}`);
         }
 
         // Handle Cookie Banner
