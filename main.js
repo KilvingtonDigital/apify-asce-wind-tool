@@ -122,7 +122,7 @@ Actor.main(async () => {
         console.log('[DEBUG] Navigating to ASCE Hazard Tool...');
         await page.goto('https://ascehazardtool.org/', { waitUntil: 'networkidle', timeout: 60000 });
 
-        // 5. Handle Cookie Banner
+        // 5. Handle Cookie Banner and Legend Modal
         console.log('[DEBUG] Handling cookie banner...');
         try {
             await page.click('button:has-text("Got it!")', { timeout: 5000 });
@@ -131,63 +131,79 @@ Actor.main(async () => {
             console.log('[DEBUG] No cookie banner found or already dismissed');
         }
 
+        // Close Legend modal if present
+        console.log('[DEBUG] Closing Legend modal...');
+        try {
+            // Try to close by clicking the collapse button
+            await page.click('button:has-text("Legend")', { timeout: 3000 });
+            console.log('[DEBUG] Closed Legend modal');
+        } catch (e) {
+            console.log('[DEBUG] No Legend modal found or already closed');
+        }
+
         // Wait for map to load
         await page.waitForTimeout(5000);
 
-        // 6. Find and Fill Address Input (Shadow DOM)
+        // 6. Find and Fill Address Input
         console.log('[DEBUG] Searching for address input...');
 
-        const inputFilled = await page.evaluate((addr) => {
-            function findInput(root) {
-                // Check current level
-                const inputs = root.querySelectorAll('input');
-                for (const input of inputs) {
-                    const placeholder = input.getAttribute('placeholder') || '';
-                    if (placeholder.toLowerCase().includes('address') ||
-                        placeholder.toLowerCase().includes('location') ||
-                        placeholder.toLowerCase().includes('place') ||
-                        input.classList.contains('esri-input')) {
-                        return input;
+        // Find the address input field
+        const inputSelector = 'input[placeholder*="address" i], input[placeholder*="location" i], input[placeholder*="place" i]';
+
+        try {
+            await page.waitForSelector(inputSelector, { timeout: 10000 });
+            await page.fill(inputSelector, address);
+            console.log('[DEBUG] Address input filled');
+        } catch (e) {
+            console.log('[DEBUG] Could not find input with standard selectors, trying Shadow DOM...');
+
+            const inputFilled = await page.evaluate((addr) => {
+                function findInput(root) {
+                    const inputs = root.querySelectorAll('input');
+                    for (const input of inputs) {
+                        const placeholder = input.getAttribute('placeholder') || '';
+                        if (placeholder.toLowerCase().includes('address') ||
+                            placeholder.toLowerCase().includes('location') ||
+                            placeholder.toLowerCase().includes('place') ||
+                            input.classList.contains('esri-input')) {
+                            return input;
+                        }
                     }
+
+                    const elements = root.querySelectorAll('*');
+                    for (const el of elements) {
+                        if (el.shadowRoot) {
+                            const found = findInput(el.shadowRoot);
+                            if (found) return found;
+                        }
+                    }
+                    return null;
                 }
 
-                // Check shadow roots
-                const elements = root.querySelectorAll('*');
-                for (const el of elements) {
-                    if (el.shadowRoot) {
-                        const found = findInput(el.shadowRoot);
-                        if (found) return found;
-                    }
+                const input = findInput(document.body);
+                if (input) {
+                    input.focus();
+                    input.value = addr;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    return true;
                 }
-                return null;
-            }
+                return false;
+            }, address);
 
-            const input = findInput(document.body);
-            if (input) {
-                input.focus();
-                input.value = addr;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                return true;
+            if (!inputFilled) {
+                throw new Error('Could not find address input field');
             }
-            return false;
-        }, address);
-
-        if (!inputFilled) {
-            throw new Error('Could not find address input field');
         }
 
-        console.log('[DEBUG] Address input filled');
+        await page.waitForTimeout(1000);
 
-        // Type the address character by character for better reliability
-        await page.keyboard.type(address, { delay: 50 });
-        await page.waitForTimeout(2000);
-
-        // Try to click suggestion or press Enter
+        // Click the SEARCH button instead of waiting for autocomplete
+        console.log('[DEBUG] Clicking SEARCH button...');
         try {
-            await page.click('.esri-search__suggestions-list li', { timeout: 4000 });
-            console.log('[DEBUG] Clicked address suggestion');
+            await page.click('button:has-text("SEARCH")', { timeout: 5000 });
+            console.log('[DEBUG] Clicked SEARCH button');
         } catch (e) {
-            console.log('[DEBUG] No suggestions, pressing Enter');
+            console.log('[DEBUG] SEARCH button not found, pressing Enter');
             await page.keyboard.press('Enter');
         }
 
