@@ -20,8 +20,8 @@ Actor.main(async () => {
     try {
         // 2. Launch Playwright Browser using Crawlee
         browser = await launchPlaywright({
-            headless: isLocal ? false : true,
             launchOptions: {
+                headless: isLocal ? false : true,
                 args: ['--no-sandbox', '--disable-setuid-sandbox']
             }
         });
