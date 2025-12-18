@@ -122,27 +122,59 @@ Actor.main(async () => {
         console.log('[DEBUG] Navigating to ASCE Hazard Tool...');
         await page.goto('https://ascehazardtool.org/', { waitUntil: 'networkidle', timeout: 60000 });
 
-        // 5. Handle Cookie Banner and Legend Modal
+        // 5. Close Welcome Modal (CRITICAL - must be first)
+        console.log('[DEBUG] Closing welcome modal...');
+        await page.waitForTimeout(2000); // Wait for modal to fully render
+
+        try {
+            // Strategy 1: Click the X button in the modal
+            const closeButton = await page.locator('button[aria-label="Close"], button[title="Close"], .modal-close, [class*="close"]').first();
+            if (await closeButton.isVisible({ timeout: 3000 })) {
+                await closeButton.click();
+                console.log('[DEBUG] Clicked X button on welcome modal');
+            }
+        } catch (e) {
+            console.log('[DEBUG] X button not found, trying alternative methods...');
+        }
+
+        // Strategy 2: Press Escape key
+        try {
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(1000);
+            console.log('[DEBUG] Pressed Escape to close modal');
+        } catch (e) {
+            console.log('[DEBUG] Escape key did not work');
+        }
+
+        // Strategy 3: Click outside the modal (on the map)
+        try {
+            await page.click('body', { position: { x: 500, y: 400 } });
+            await page.waitForTimeout(1000);
+            console.log('[DEBUG] Clicked outside modal');
+        } catch (e) {
+            console.log('[DEBUG] Click outside did not work');
+        }
+
+        // Handle Cookie Banner
         console.log('[DEBUG] Handling cookie banner...');
         try {
-            await page.click('button:has-text("Got it!")', { timeout: 5000 });
+            await page.click('button:has-text("Got it!")', { timeout: 3000 });
             console.log('[DEBUG] Clicked "Got it!" button');
         } catch (e) {
             console.log('[DEBUG] No cookie banner found or already dismissed');
         }
 
-        // Close Legend modal if present
-        console.log('[DEBUG] Closing Legend modal...');
+        // Close Legend panel if present
+        console.log('[DEBUG] Closing Legend panel...');
         try {
-            // Try to close by clicking the collapse button
             await page.click('button:has-text("Legend")', { timeout: 3000 });
-            console.log('[DEBUG] Closed Legend modal');
+            console.log('[DEBUG] Closed Legend panel');
         } catch (e) {
-            console.log('[DEBUG] No Legend modal found or already closed');
+            console.log('[DEBUG] No Legend panel found or already closed');
         }
 
-        // Wait for map to load
-        await page.waitForTimeout(5000);
+        // Wait for UI to stabilize
+        await page.waitForTimeout(3000);
 
         // 6. Find and Fill Address Input
         console.log('[DEBUG] Searching for address input...');
@@ -251,25 +283,28 @@ Actor.main(async () => {
         // Capture DOM before clicking View Results
         await captureDOMSnapshot('Before View Results Click');
 
-        // 9. Click "View Results" and Wait for Response
-        console.log('[DEBUG] Clicking View Results...');
+        // 9. Click "View Results" (requires MOUSE interaction)
+        console.log('[DEBUG] Clicking View Results with mouse...');
 
         // Take screenshot before clicking
         await page.screenshot({ path: 'before_view_results.png', fullPage: true });
 
         try {
-            // Wait for both the click and network response
+            // View Results button is in the left panel, bottom area (around x:140, y:540)
+            console.log('[DEBUG] Moving mouse to View Results button...');
+            await page.mouse.move(140, 540, { steps: 10 }); // Simulate human mouse movement
+            await page.waitForTimeout(500);
+
+            // Click with mouse and wait for network response
             await Promise.all([
                 page.waitForResponse(response =>
-                    response.url().includes('hazard') || response.url().includes('wind'),
+                    response.url().includes('hazard') || response.url().includes('wind') || response.url().includes('identify'),
                     { timeout: 10000 }
                 ).catch(() => console.log('[DEBUG] No network response detected')),
-                page.click('button:has-text("View Results")').catch(() =>
-                    page.click('*:has-text("View Results")')
-                )
+                page.mouse.click(140, 540)
             ]);
 
-            console.log('[DEBUG] View Results clicked');
+            console.log('[DEBUG] View Results clicked with mouse');
         } catch (e) {
             console.log(`[DEBUG] Error clicking View Results: ${e.message}`);
             await page.screenshot({ path: 'view_results_error.png', fullPage: true });
