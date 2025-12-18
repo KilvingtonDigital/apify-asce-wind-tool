@@ -313,12 +313,18 @@ Actor.main(async () => {
 
         console.log(`[DEBUG] SUCCESS: Extracted wind speed: ${windSpeed}`);
 
-        // 11. Save Results
+        // Extract numeric value from "114 Vmph" format
+        const numericValue = parseFloat(windSpeed.match(/\d+/)?.[0] || '0');
+
+        // 11. Save Results (matching backend DTO format)
         await Actor.pushData({
             address,
-            wind_speed: windSpeed,
-            status: 'success',
-            timestamp: new Date().toISOString()
+            windSpeed: numericValue,
+            vmph: numericValue,
+            source: 'ASCE Hazard Tool',
+            retrievedAt: new Date().toISOString(),
+            success: true,
+            rawValue: windSpeed  // Keep original "114 Vmph" for reference
         });
 
         // Save final screenshot
@@ -333,13 +339,13 @@ Actor.main(async () => {
             await page.screenshot({ path: 'error.png', fullPage: true });
         }
 
-        // Push error to dataset
+        // Push error to dataset (matching backend DTO format)
         await Actor.pushData({
             address,
-            status: 'failed',
-            error: error.message,
-            stack: error.stack,
-            timestamp: new Date().toISOString()
+            source: 'ASCE Hazard Tool',
+            retrievedAt: new Date().toISOString(),
+            success: false,
+            error: error.message
         });
 
         throw error;
