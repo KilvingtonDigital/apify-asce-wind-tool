@@ -19,9 +19,12 @@ Actor.main(async () => {
 
     try {
         // 2. Launch Playwright Browser
+        // Use Apify's pre-installed browser
         browser = await chromium.launch({
             headless: isLocal ? false : true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            // Apify's Playwright image has browsers at /usr/bin/chromium
+            executablePath: process.env.APIFY_IS_AT_HOME ? '/usr/bin/chromium' : undefined
         });
 
         // 3. Create Context with Tracing
