@@ -15,19 +15,50 @@ Actor.main(async () => {
 
     console.log(`[DEBUG] Starting ASCE Wind Speed Lookup for: ${address}`);
 
-    // 2. Launch Puppeteer with Video Recording
+    // 2. Launch Puppeteer
     const browser = await launchPuppeteer({
         useChrome: true,
         launchOptions: {
             headless: isLocal ? false : 'new',
             args: ['--window-size=1280,800', '--start-maximized']
-        },
-        // Enable video recording on Apify
-        recordVideo: !isLocal,
-        recordVideoDir: './videos'
+        }
     });
 
     const page = await browser.newPage();
+
+    // Enable video recording via CDP (Chrome DevTools Protocol)
+    let videoPath = null;
+    if (!isLocal) {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const client = await page.target().createCDPSession();
+
+            videoPath = path.join(process.cwd(), 'recording.webm');
+            const stream = fs.createWriteStream(videoPath);
+
+            await client.send('Page.startScreencast', {
+                format: 'png',
+                quality: 80,
+                everyNthFrame: 1
+            });
+
+            client.on('Page.screencastFrame', async ({ data, sessionId }) => {
+                try {
+                    stream.write(Buffer.from(data, 'base64'));
+                    await client.send('Page.screencastFrameAck', { sessionId });
+                } catch (e) {
+                    console.log(`[DEBUG] Screencast frame error: ${e.message}`);
+                }
+            });
+
+            console.log('[DEBUG] Screen recording started');
+        } catch (e) {
+            console.log(`[DEBUG] Failed to start recording: ${e.message}`);
+        }
+    }
+
+
 
     // --- Helper: Save Debug Assets ---
     const saveDebugAssets = async (prefix) => {
@@ -389,29 +420,34 @@ Actor.main(async () => {
         throw error;
     } finally {
         // Save video recording if it exists
-        if (!isLocal) {
+        if (!isLocal && videoPath) {
             try {
                 const fs = require('fs');
-                const path = require('path');
-                const videoDir = './videos';
-                
-                if (fs.existsSync(videoDir)) {
-                    const files = fs.readdirSync(videoDir);
-                    for (const file of files) {
-                        if (file.endsWith('.webm') || file.endsWith('.mp4')) {
-                            const videoPath = path.join(videoDir, file);
-                            const videoBuffer = fs.readFileSync(videoPath);
-                            await Actor.setValue('RUN_VIDEO', videoBuffer, { contentType: 'video/webm' });
-                            console.log(`[DEBUG] Uploaded video: ${file}`);
-                            break;
-                        }
-                    }
+
+                // Stop recording
+                try {
+                    const client = await page.target().createCDPSession();
+                    await client.send('Page.stopScreencast');
+                    console.log('[DEBUG] Screen recording stopped');
+                } catch (e) {
+                    console.log(`[DEBUG] Error stopping screencast: ${e.message}`);
+                }
+
+                // Wait a bit for file to finish writing
+                await new Promise(r => setTimeout(r, 2000));
+
+                if (fs.existsSync(videoPath)) {
+                    const videoBuffer = fs.readFileSync(videoPath);
+                    await Actor.setValue('RUN_VIDEO', videoBuffer, { contentType: 'video/webm' });
+                    console.log(`[DEBUG] Uploaded video recording`);
+                } else {
+                    console.log(`[DEBUG] Video file not found at ${videoPath}`);
                 }
             } catch (e) {
                 console.log(`[DEBUG] Failed to upload video: ${e.message}`);
             }
         }
-        
+
         if (browser) await browser.close();
     }
 });
