@@ -1,0 +1,8 @@
+TimeoutError: Waiting failed: 60000ms exceeded
+    at new WaitTask (C:\Business\Kilvington Woodworks\Agentic Agents\Property manager AI Assistant\apify-asce-wind-tool\node_modules\puppeteer-core\lib\cjs\puppeteer\common\WaitTask.js:50:34)
+    at IsolatedWorld.waitForFunction (C:\Business\Kilvington Woodworks\Agentic Agents\Property manager AI Assistant\apify-asce-wind-tool\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Realm.js:25:26)
+    at CdpFrame.waitForFunction (C:\Business\Kilvington Woodworks\Agentic Agents\Property manager AI Assistant\apify-asce-wind-tool\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Frame.js:558:43)
+    at CdpFrame.<anonymous> (C:\Business\Kilvington Woodworks\Agentic Agents\Property manager AI Assistant\apify-asce-wind-tool\node_modules\puppeteer-core\lib\cjs\puppeteer\util\decorators.js:98:27)
+    at CdpPage.waitForFunction (C:\Business\Kilvington Woodworks\Agentic Agents\Property manager AI Assistant\apify-asce-wind-tool\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Page.js:1466:37)
+    at C:\Business\Kilvington Woodworks\Agentic Agents\Property manager AI Assistant\apify-asce-wind-tool\main.js:212:20
+    at async C:\Business\Kilvington Woodworks\Agentic Agents\Property manager AI Assistant\apify-asce-wind-tool\node_modules\apify\actor.js:182:24

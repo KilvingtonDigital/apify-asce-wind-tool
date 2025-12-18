@@ -1,6 +1,14 @@
-# Using Apify image with Puppeteer + Chrome pre-installed
-FROM apify/actor-node-puppeteer-chrome:18
+# Using Apify's Playwright base image
+FROM apify/actor-node-playwright-chrome:18
+
+# Copy package files
 COPY package*.json ./
+
+# Install dependencies
 RUN npm install
+
+# Copy source code
 COPY . ./
+
+# Start the actor
 CMD npm start
