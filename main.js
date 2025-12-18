@@ -28,6 +28,10 @@ Actor.main(async () => {
 
         page = await browser.newPage();
 
+        // Set viewport to consistent size
+        await page.setViewportSize({ width: 1280, height: 640 });
+        console.log('[DEBUG] Set viewport to 1280x640');
+
         // 3. Network Monitoring
         const networkLog = [];
         page.on('request', request => {
