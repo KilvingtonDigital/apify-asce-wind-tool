@@ -122,57 +122,83 @@ Actor.main(async () => {
         console.log('[DEBUG] Navigating to ASCE Hazard Tool...');
         await page.goto('https://ascehazardtool.org/', { waitUntil: 'networkidle', timeout: 60000 });
 
-        // 5. Close Welcome Modal (CRITICAL - requires MOUSE interaction)
-        console.log('[DEBUG] Closing welcome modal with mouse...');
+        // 5. Close Welcome Modal (CRITICAL - Shadow DOM aware)
+        console.log('[DEBUG] Closing welcome modal...');
         await page.waitForTimeout(3000); // Wait for modal to fully render
 
-        // Find the X button and click it with mouse
+        // Try multiple aggressive strategies
         try {
-            console.log('[DEBUG] Looking for close button...');
+            console.log('[DEBUG] Attempting to close modal...');
 
-            // Get the close button coordinates using DOM query
-            const buttonCoords = await page.evaluate(() => {
-                // Try multiple selectors
+            // Strategy 1: Shadow DOM traversal + mouse click
+            const shadowResult = await page.evaluate(() => {
+                // Look for calcite-modal (web component with shadow DOM)
+                const modal = document.querySelector('calcite-modal');
+                if (modal && modal.shadowRoot) {
+                    // Find close button in shadow DOM
+                    const closeBtn = modal.shadowRoot.querySelector('calcite-action[icon="x"]') ||
+                        modal.shadowRoot.querySelector('[class*="close"]');
+                    if (closeBtn) {
+                        const rect = closeBtn.getBoundingClientRect();
+                        return {
+                            found: true,
+                            x: rect.left + rect.width / 2,
+                            y: rect.top + rect.height / 2,
+                            method: 'shadow-dom'
+                        };
+                    }
+                }
+
+                // Fallback: regular DOM
                 const selectors = [
                     'button[aria-label="Close"]',
                     'button[title="Close"]',
                     'calcite-action[icon="x"]',
-                    '.modal-close',
-                    'button.close',
-                    '[class*="close"]'
+                    '.modal-close'
                 ];
 
                 for (const selector of selectors) {
-                    const button = document.querySelector(selector);
-                    if (button) {
-                        const rect = button.getBoundingClientRect();
+                    const btn = document.querySelector(selector);
+                    if (btn) {
+                        const rect = btn.getBoundingClientRect();
                         return {
+                            found: true,
                             x: rect.left + rect.width / 2,
                             y: rect.top + rect.height / 2,
-                            selector: selector
+                            method: selector
                         };
                     }
                 }
-                return null;
+
+                return { found: false };
             });
 
-            if (buttonCoords) {
-                console.log(`[DEBUG] Found close button at (${buttonCoords.x}, ${buttonCoords.y}) using ${buttonCoords.selector}`);
-
-                // Move mouse and click
-                await page.mouse.move(buttonCoords.x, buttonCoords.y, { steps: 10 });
+            if (shadowResult.found) {
+                console.log(`[DEBUG] Found close button at (${shadowResult.x}, ${shadowResult.y}) via ${shadowResult.method}`);
+                await page.mouse.move(shadowResult.x, shadowResult.y, { steps: 10 });
                 await page.waitForTimeout(500);
-                await page.mouse.click(buttonCoords.x, buttonCoords.y);
-
-                console.log('[DEBUG] Clicked X button with mouse');
+                await page.mouse.click(shadowResult.x, shadowResult.y);
+                console.log('[DEBUG] Clicked close button');
                 await page.waitForTimeout(2000);
             } else {
-                console.log('[DEBUG] Could not find X button, trying Escape key');
-                await page.keyboard.press('Escape');
+                console.log('[DEBUG] No close button found, trying DOM removal');
+
+                // Strategy 2: Nuclear option - remove modal from DOM
+                await page.evaluate(() => {
+                    const modal = document.querySelector('calcite-modal');
+                    if (modal) {
+                        modal.remove();
+                        console.log('Removed calcite-modal from DOM');
+                    }
+                    // Also remove any backdrop/scrim
+                    const scrim = document.querySelector('calcite-scrim');
+                    if (scrim) scrim.remove();
+                });
+
                 await page.waitForTimeout(1000);
             }
         } catch (e) {
-            console.log(`[DEBUG] Modal close failed: ${e.message}`);
+            console.log(`[DEBUG] Modal close error: ${e.message}`);
         }
 
         // Handle Cookie Banner
