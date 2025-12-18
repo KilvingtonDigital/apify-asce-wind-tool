@@ -5,7 +5,7 @@
     "main": "main.js",
     "dependencies": {
         "apify": "^3.5.2",
-        "playwright": "^1.40.0"
+        "crawlee": "^3.11.0"
     },
     "scripts": {
         "start": "node main.js",

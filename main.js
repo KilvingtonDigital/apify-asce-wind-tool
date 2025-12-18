@@ -1,5 +1,5 @@
 const { Actor } = require('apify');
-const { chromium } = require('playwright');
+const { launchPlaywright } = require('crawlee');
 
 Actor.main(async () => {
     // 1. Get Input
@@ -15,30 +15,20 @@ Actor.main(async () => {
 
     console.log(`[DEBUG] Starting ASCE Wind Speed Lookup for: ${address}`);
 
-    let browser, context, page;
+    let browser, page;
 
     try {
-        // 2. Launch Playwright Browser
-        // Use Apify's pre-installed browser
-        browser = await chromium.launch({
+        // 2. Launch Playwright Browser using Crawlee
+        browser = await launchPlaywright({
             headless: isLocal ? false : true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            // Apify's Playwright image has browsers at /usr/bin/chromium
-            executablePath: process.env.APIFY_IS_AT_HOME ? '/usr/bin/chromium' : undefined
+            launchOptions: {
+                args: ['--no-sandbox', '--disable-setuid-sandbox']
+            }
         });
 
-        // 3. Create Context with Tracing
-        context = await browser.newContext({
-            viewport: { width: 1280, height: 800 },
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        });
+        page = await browser.newPage();
 
-        // Start tracing for debugging
-        await context.tracing.start({ screenshots: true, snapshots: true });
-
-        page = await context.newPage();
-
-        // 4. Network Monitoring
+        // 3. Network Monitoring
         const networkLog = [];
         page.on('request', request => {
             const url = request.url();
@@ -128,11 +118,11 @@ Actor.main(async () => {
             return snapshot;
         };
 
-        // 5. Navigate to ASCE Hazard Tool
+        // 4. Navigate to ASCE Hazard Tool
         console.log('[DEBUG] Navigating to ASCE Hazard Tool...');
         await page.goto('https://ascehazardtool.org/', { waitUntil: 'networkidle', timeout: 60000 });
 
-        // 6. Handle Cookie Banner
+        // 5. Handle Cookie Banner
         console.log('[DEBUG] Handling cookie banner...');
         try {
             await page.click('button:has-text("Got it!")', { timeout: 5000 });
@@ -144,7 +134,7 @@ Actor.main(async () => {
         // Wait for map to load
         await page.waitForTimeout(5000);
 
-        // 7. Find and Fill Address Input (Shadow DOM)
+        // 6. Find and Fill Address Input (Shadow DOM)
         console.log('[DEBUG] Searching for address input...');
 
         const inputFilled = await page.evaluate((addr) => {
@@ -207,7 +197,7 @@ Actor.main(async () => {
         // Capture DOM before setting Risk Category
         await captureDOMSnapshot('Before Risk Category Selection');
 
-        // 8. Set Risk Category II
+        // 7. Set Risk Category II
         console.log('[DEBUG] Setting Risk Category to II...');
 
         const riskResult = await page.evaluate(() => {
@@ -231,7 +221,7 @@ Actor.main(async () => {
 
         await page.waitForTimeout(1000);
 
-        // 9. Select Wind Load
+        // 8. Select Wind Load
         console.log('[DEBUG] Selecting Wind load...');
 
         await page.evaluate(() => {
@@ -245,7 +235,7 @@ Actor.main(async () => {
         // Capture DOM before clicking View Results
         await captureDOMSnapshot('Before View Results Click');
 
-        // 10. Click "View Results" and Wait for Response
+        // 9. Click "View Results" and Wait for Response
         console.log('[DEBUG] Clicking View Results...');
 
         // Take screenshot before clicking
@@ -291,7 +281,7 @@ Actor.main(async () => {
             throw new Error('Wind speed data did not appear');
         }
 
-        // 11. Extract Wind Speed
+        // 10. Extract Wind Speed
         const windSpeed = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('*'));
             const vmphElement = elements.find(el =>
@@ -307,7 +297,7 @@ Actor.main(async () => {
 
         console.log(`[DEBUG] SUCCESS: Extracted wind speed: ${windSpeed}`);
 
-        // 12. Save Results
+        // 11. Save Results
         await Actor.pushData({
             address,
             wind_speed: windSpeed,
@@ -338,24 +328,6 @@ Actor.main(async () => {
 
         throw error;
     } finally {
-        // Stop tracing and save
-        if (context) {
-            try {
-                await context.tracing.stop({ path: 'trace.zip' });
-                console.log('[DEBUG] Trace saved to trace.zip');
-
-                // Upload trace to Key-Value Store
-                const fs = require('fs');
-                if (fs.existsSync('trace.zip')) {
-                    const traceBuffer = fs.readFileSync('trace.zip');
-                    await Actor.setValue('TRACE', traceBuffer, { contentType: 'application/zip' });
-                    console.log('[DEBUG] Trace uploaded to Key-Value Store');
-                }
-            } catch (e) {
-                console.log(`[DEBUG] Failed to save trace: ${e.message}`);
-            }
-        }
-
         // Upload screenshots
         const fs = require('fs');
         const screenshots = ['before_view_results.png', 'success.png', 'error.png', 'timeout.png', 'view_results_error.png'];
