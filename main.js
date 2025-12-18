@@ -53,6 +53,78 @@ Actor.main(async () => {
             }
         });
 
+        // Helper: Capture DOM structure and element details
+        const captureDOMSnapshot = async (label) => {
+            console.log(`\n=== DOM SNAPSHOT: ${label} ===`);
+            const snapshot = await page.evaluate(() => {
+                const result = {
+                    buttons: [],
+                    selects: [],
+                    inputs: [],
+                    visibleText: document.body.innerText.substring(0, 500)
+                };
+
+                // Capture all buttons with their attributes
+                document.querySelectorAll('button').forEach((btn, i) => {
+                    if (i < 15) {
+                        result.buttons.push({
+                            index: i,
+                            text: btn.textContent.trim().substring(0, 100),
+                            id: btn.id,
+                            class: btn.className,
+                            title: btn.getAttribute('title'),
+                            ariaLabel: btn.getAttribute('aria-label'),
+                            disabled: btn.disabled,
+                            visible: btn.offsetParent !== null,
+                            outerHTML: btn.outerHTML.substring(0, 200)
+                        });
+                    }
+                });
+
+                // Capture all select elements
+                document.querySelectorAll('select').forEach((sel, i) => {
+                    result.selects.push({
+                        index: i,
+                        id: sel.id,
+                        class: sel.className,
+                        name: sel.name,
+                        value: sel.value,
+                        options: Array.from(sel.options).map(o => ({
+                            value: o.value,
+                            text: o.text,
+                            selected: o.selected
+                        }))
+                    });
+                });
+
+                // Capture inputs
+                document.querySelectorAll('input').forEach((inp, i) => {
+                    if (i < 10) {
+                        result.inputs.push({
+                            index: i,
+                            type: inp.type,
+                            id: inp.id,
+                            class: inp.className,
+                            name: inp.name,
+                            placeholder: inp.placeholder,
+                            value: inp.value,
+                            checked: inp.checked
+                        });
+                    }
+                });
+
+                return result;
+            });
+
+            console.log('Buttons:', JSON.stringify(snapshot.buttons, null, 2));
+            console.log('Selects:', JSON.stringify(snapshot.selects, null, 2));
+            console.log('Inputs:', JSON.stringify(snapshot.inputs, null, 2));
+            console.log('Visible Text Preview:', snapshot.visibleText);
+            console.log('=== END SNAPSHOT ===\n');
+
+            return snapshot;
+        };
+
         // 5. Navigate to ASCE Hazard Tool
         console.log('[DEBUG] Navigating to ASCE Hazard Tool...');
         await page.goto('https://ascehazardtool.org/', { waitUntil: 'networkidle', timeout: 60000 });
@@ -129,6 +201,9 @@ Actor.main(async () => {
         // Wait for map to update
         await page.waitForTimeout(5000);
 
+        // Capture DOM before setting Risk Category
+        await captureDOMSnapshot('Before Risk Category Selection');
+
         // 8. Set Risk Category II
         console.log('[DEBUG] Setting Risk Category to II...');
 
@@ -163,6 +238,9 @@ Actor.main(async () => {
         });
 
         await page.waitForTimeout(1000);
+
+        // Capture DOM before clicking View Results
+        await captureDOMSnapshot('Before View Results Click');
 
         // 10. Click "View Results" and Wait for Response
         console.log('[DEBUG] Clicking View Results...');
