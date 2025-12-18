@@ -295,16 +295,25 @@ Actor.main(async () => {
             console.log(`[DEBUG] Found select, current value: ${select.value}`);
             console.log(`[DEBUG] Available options:`, Array.from(select.options).map(o => ({ value: o.value, text: o.text })));
 
-            // Set to Risk Category II
-            select.value = 'II';
+            // Find the option with text "II" and get its value attribute
+            const optionII = Array.from(select.options).find(opt => opt.text.trim() === 'II');
+            if (!optionII) {
+                console.log('[DEBUG] Option with text "II" not found');
+                return { success: false, reason: 'option_not_found' };
+            }
+
+            console.log(`[DEBUG] Found option "II" with value: ${optionII.value}`);
+
+            // Set to Risk Category II using the actual value attribute
+            select.value = optionII.value;
 
             // Trigger change events to notify UI
             select.dispatchEvent(new Event('change', { bubbles: true }));
             select.dispatchEvent(new Event('input', { bubbles: true }));
 
-            console.log(`[DEBUG] Set value to 'II', new value: ${select.value}`);
+            console.log(`[DEBUG] Set value to '${optionII.value}', new value: ${select.value}`);
 
-            return { success: true, newValue: select.value };
+            return { success: true, newValue: select.value, optionText: optionII.text };
         });
 
         console.log(`[DEBUG] Risk Category Set Result:`, JSON.stringify(riskSetResult));
