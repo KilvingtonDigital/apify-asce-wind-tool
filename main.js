@@ -282,59 +282,41 @@ Actor.main(async () => {
 
         // --- 5. Settings (Risk Category) ---
         console.log("[DEBUG] Setting Risk Category...");
-        // Strategy A: UI Click
-        let riskSuccess = false;
-        await clickByText('*', 'Select Risk');
-        await new Promise(r => setTimeout(r, 1000));
 
-        riskSuccess = await clickByText('*', 'Risk Category II');
-        if (!riskSuccess) riskSuccess = await clickByText('*', 'II');
+        // This is a standard HTML <select> element, not a custom component
+        // Directly set the value
+        const riskSetResult = await page.evaluate(() => {
+            const select = document.querySelector('select.risk-level-selector');
+            if (!select) {
+                console.log('[DEBUG] select.risk-level-selector not found');
+                return { success: false, reason: 'selector_not_found' };
+            }
 
-        // Verification: Check if UI updated
-        const isVerified = await page.evaluate(() => {
-            const html = document.body.innerHTML;
-            // If we see "Select Risk" still dominant or don't see "Risk Category II" as selected value
-            // It's safer to assume failure and let DOM manipulate it.
-            return document.body.innerText.includes("Risk Category II");
+            console.log(`[DEBUG] Found select, current value: ${select.value}`);
+            console.log(`[DEBUG] Available options:`, Array.from(select.options).map(o => ({ value: o.value, text: o.text })));
+
+            // Set to Risk Category II
+            select.value = 'II';
+
+            // Trigger change events to notify UI
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            select.dispatchEvent(new Event('input', { bubbles: true }));
+
+            console.log(`[DEBUG] Set value to 'II', new value: ${select.value}`);
+
+            return { success: true, newValue: select.value };
         });
 
-        if (!isVerified && riskSuccess) {
-            console.log("[DEBUG] Click reported success but 'Risk Category II' text is missing. Forcing Deep DOM Set.");
-            riskSuccess = false;
+        console.log(`[DEBUG] Risk Category Set Result:`, JSON.stringify(riskSetResult));
+
+        if (!riskSetResult.success) {
+            console.log("[DEBUG] CRITICAL: Failed to set Risk Category");
+            await saveDebugAssets('RISK_CATEGORY_FAIL');
+            throw new Error(`Failed to set Risk Category: ${riskSetResult.reason}`);
         }
 
-        // Strategy B: Force Value via DOM/ShadowDOM if Click Failed
-        if (!riskSuccess) {
-            console.log("[DEBUG] UI Click failed. Attempting deep DOM set...");
-            riskSuccess = await page.evaluate(() => {
-                function findCalciteSelect(node) {
-                    if (!node) return null;
-                    if (node.tagName === 'CALCITE-SELECT' || (node.classList && node.classList.contains('hazard-select'))) return node;
-                    if (node.shadowRoot) {
-                        const found = findCalciteSelect(node.shadowRoot);
-                        if (found) return found;
-                    }
-                    if (node.children) {
-                        for (let child of node.children) {
-                            const found = findCalciteSelect(child);
-                            if (found) return found;
-                        }
-                    }
-                    return null;
-                }
-
-                // Try finding any select first
-                let select = document.querySelector('calcite-select');
-                if (!select) select = findCalciteSelect(document.body);
-
-                if (select) {
-                    select.value = 'II'; // Set value directly
-                    return true;
-                }
-                return false;
-            });
-            console.log(`[DEBUG] Deep DOM Set result: ${riskSuccess}`);
-        }
+        // Wait for UI to update
+        await new Promise(r => setTimeout(r, 2000));
 
         // --- 6. Wind Load ---
         console.log("[DEBUG] Selecting Wind Load...");
