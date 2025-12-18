@@ -185,19 +185,39 @@ Actor.main(async () => {
                 console.log('[DEBUG] Clicked close button');
                 await page.waitForTimeout(2000);
             } else {
-                console.log('[DEBUG] No close button found, trying DOM removal');
+                console.log('[DEBUG] No close button found via selectors, trying hardcoded coordinates');
 
-                // Strategy 2: Nuclear option - remove modal from DOM
-                await page.evaluate(() => {
+                // Strategy 2: Hardcoded coordinates (measured from screenshot at 1280x640)
+                // X button is at approximately (680, 248) - top-right of modal
+                const hardcodedX = 680;
+                const hardcodedY = 248;
+
+                console.log(`[DEBUG] Clicking hardcoded position (${hardcodedX}, ${hardcodedY})`);
+                await page.mouse.move(hardcodedX, hardcodedY, { steps: 10 });
+                await page.waitForTimeout(500);
+                await page.mouse.click(hardcodedX, hardcodedY);
+                console.log('[DEBUG] Clicked hardcoded X button position');
+                await page.waitForTimeout(2000);
+
+                // Strategy 3: Nuclear option - remove modal from DOM if click didn't work
+                const modalStillVisible = await page.evaluate(() => {
                     const modal = document.querySelector('calcite-modal');
-                    if (modal) {
-                        modal.remove();
-                        console.log('Removed calcite-modal from DOM');
-                    }
-                    // Also remove any backdrop/scrim
-                    const scrim = document.querySelector('calcite-scrim');
-                    if (scrim) scrim.remove();
+                    return modal !== null;
                 });
+
+                if (modalStillVisible) {
+                    console.log('[DEBUG] Modal still visible, removing from DOM');
+                    await page.evaluate(() => {
+                        const modal = document.querySelector('calcite-modal');
+                        if (modal) {
+                            modal.remove();
+                            console.log('Removed calcite-modal from DOM');
+                        }
+                        // Also remove any backdrop/scrim
+                        const scrim = document.querySelector('calcite-scrim');
+                        if (scrim) scrim.remove();
+                    });
+                }
 
                 await page.waitForTimeout(1000);
             }
